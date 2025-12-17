@@ -244,7 +244,7 @@ func (m *Manager) branchToMR(branch string) *MergeRequest {
 		IssueID:      issueID,
 		TargetBranch: "main", // Default; swarm would use integration branch
 		CreatedAt:    time.Now(), // Would ideally get from git
-		Status:       MRPending,
+		Status:       MROpen,
 	}
 }
 
@@ -275,7 +275,7 @@ func (m *Manager) ProcessQueue() error {
 	}
 
 	for _, item := range queue {
-		if item.MR.Status != MRPending {
+		if !item.MR.IsOpen() {
 			continue
 		}
 
@@ -304,9 +304,11 @@ type MergeResult struct {
 func (m *Manager) ProcessMR(mr *MergeRequest) MergeResult {
 	ref, _ := m.loadState()
 
-	// Set current MR
+	// Claim the MR (open → in_progress)
+	if err := mr.Claim(); err != nil {
+		return MergeResult{Error: fmt.Sprintf("cannot claim MR: %v", err)}
+	}
 	ref.CurrentMR = mr
-	mr.Status = MRProcessing
 	m.saveState(ref)
 
 	result := MergeResult{}
@@ -314,7 +316,7 @@ func (m *Manager) ProcessMR(mr *MergeRequest) MergeResult {
 	// 1. Fetch the branch
 	if err := m.gitRun("fetch", "origin", mr.Branch); err != nil {
 		result.Error = fmt.Sprintf("fetch failed: %v", err)
-		m.completeMR(mr, MRFailed, result.Error)
+		m.completeMR(mr, "", result.Error) // Reopen for retry
 		return result
 	}
 
@@ -322,7 +324,7 @@ func (m *Manager) ProcessMR(mr *MergeRequest) MergeResult {
 	// First, checkout target
 	if err := m.gitRun("checkout", mr.TargetBranch); err != nil {
 		result.Error = fmt.Sprintf("checkout target failed: %v", err)
-		m.completeMR(mr, MRFailed, result.Error)
+		m.completeMR(mr, "", result.Error) // Reopen for retry
 		return result
 	}
 
@@ -341,13 +343,13 @@ func (m *Manager) ProcessMR(mr *MergeRequest) MergeResult {
 			result.Error = "merge conflict"
 			// Abort the merge
 			m.gitRun("merge", "--abort")
-			m.completeMR(mr, MRFailed, "merge conflict - polecat must rebase")
+			m.completeMR(mr, "", "merge conflict - polecat must rebase") // Reopen for rebase
 			// Notify worker about conflict
 			m.notifyWorkerConflict(mr)
 			return result
 		}
 		result.Error = fmt.Sprintf("merge failed: %v", err)
-		m.completeMR(mr, MRFailed, result.Error)
+		m.completeMR(mr, "", result.Error) // Reopen for retry
 		return result
 	}
 
@@ -359,7 +361,7 @@ func (m *Manager) ProcessMR(mr *MergeRequest) MergeResult {
 			result.Error = fmt.Sprintf("tests failed: %v", err)
 			// Reset to before merge
 			m.gitRun("reset", "--hard", "HEAD~1")
-			m.completeMR(mr, MRFailed, result.Error)
+			m.completeMR(mr, "", result.Error) // Reopen for fixes
 			return result
 		}
 	}
@@ -369,13 +371,13 @@ func (m *Manager) ProcessMR(mr *MergeRequest) MergeResult {
 		result.Error = fmt.Sprintf("push failed: %v", err)
 		// Reset to before merge
 		m.gitRun("reset", "--hard", "HEAD~1")
-		m.completeMR(mr, MRFailed, result.Error)
+		m.completeMR(mr, "", result.Error) // Reopen for retry
 		return result
 	}
 
 	// Success!
 	result.Success = true
-	m.completeMR(mr, MRMerged, "")
+	m.completeMR(mr, CloseReasonMerged, "")
 
 	// Notify worker of success
 	m.notifyWorkerMerged(mr)
@@ -387,24 +389,41 @@ func (m *Manager) ProcessMR(mr *MergeRequest) MergeResult {
 }
 
 // completeMR marks an MR as complete and updates stats.
-func (m *Manager) completeMR(mr *MergeRequest, status MRStatus, errMsg string) {
+// For success, pass closeReason (e.g., CloseReasonMerged).
+// For failures that should return to open, pass empty closeReason.
+func (m *Manager) completeMR(mr *MergeRequest, closeReason CloseReason, errMsg string) {
 	ref, _ := m.loadState()
-
-	mr.Status = status
 	mr.Error = errMsg
 	ref.CurrentMR = nil
 
 	now := time.Now()
-	switch status {
-	case MRMerged:
-		ref.LastMergeAt = &now
-		ref.Stats.TotalMerged++
-		ref.Stats.TodayMerged++
-	case MRFailed:
+
+	if closeReason != "" {
+		// Close the MR (in_progress → closed)
+		if err := mr.Close(closeReason); err != nil {
+			// Log error but continue - this shouldn't happen
+			fmt.Printf("Warning: failed to close MR: %v\n", err)
+		}
+		switch closeReason {
+		case CloseReasonMerged:
+			ref.LastMergeAt = &now
+			ref.Stats.TotalMerged++
+			ref.Stats.TodayMerged++
+		case CloseReasonSuperseded:
+			ref.Stats.TotalSkipped++
+		default:
+			// Other close reasons (rejected, conflict) count as failed
+			ref.Stats.TotalFailed++
+			ref.Stats.TodayFailed++
+		}
+	} else {
+		// Reopen the MR for rework (in_progress → open)
+		if err := mr.Reopen(); err != nil {
+			// Log error but continue
+			fmt.Printf("Warning: failed to reopen MR: %v\n", err)
+		}
 		ref.Stats.TotalFailed++
 		ref.Stats.TodayFailed++
-	case MRSkipped:
-		ref.Stats.TotalSkipped++
 	}
 
 	m.saveState(ref)

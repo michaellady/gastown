@@ -1,7 +1,11 @@
 // Package refinery provides the merge queue processing agent.
 package refinery
 
-import "time"
+import (
+	"errors"
+	"fmt"
+	"time"
+)
 
 // State represents the refinery's running state.
 type State string
@@ -67,29 +71,45 @@ type MergeRequest struct {
 	// Status is the current status of the merge request.
 	Status MRStatus `json:"status"`
 
-	// Error contains error details if Status is MRFailed.
+	// CloseReason indicates why the MR was closed (only set when Status=closed).
+	CloseReason CloseReason `json:"close_reason,omitempty"`
+
+	// Error contains error details if the MR failed.
 	Error string `json:"error,omitempty"`
 }
 
 // MRStatus represents the status of a merge request.
+// Uses beads-style statuses for consistency with the issue tracking system.
 type MRStatus string
 
 const (
-	// MRPending means the MR is waiting to be processed.
-	MRPending MRStatus = "pending"
+	// MROpen means the MR is waiting to be processed or needs rework.
+	MROpen MRStatus = "open"
 
-	// MRProcessing means the MR is currently being merged.
-	MRProcessing MRStatus = "processing"
+	// MRInProgress means the MR is currently being merged by the Engineer.
+	MRInProgress MRStatus = "in_progress"
 
-	// MRMerged means the MR was successfully merged.
-	MRMerged MRStatus = "merged"
-
-	// MRFailed means the merge failed (conflict or error).
-	MRFailed MRStatus = "failed"
-
-	// MRSkipped means the MR was skipped (duplicate, outdated, etc).
-	MRSkipped MRStatus = "skipped"
+	// MRClosed means the MR processing is complete (merged, rejected, etc).
+	MRClosed MRStatus = "closed"
 )
+
+// CloseReason indicates why a merge request was closed.
+type CloseReason string
+
+const (
+	// CloseReasonMerged means the MR was successfully merged.
+	CloseReasonMerged CloseReason = "merged"
+
+	// CloseReasonRejected means the MR was manually rejected.
+	CloseReasonRejected CloseReason = "rejected"
+
+	// CloseReasonConflict means the MR had unresolvable conflicts.
+	CloseReasonConflict CloseReason = "conflict"
+
+	// CloseReasonSuperseded means the MR was replaced by another.
+	CloseReasonSuperseded CloseReason = "superseded"
+)
+
 
 // RefineryStats contains cumulative refinery statistics.
 type RefineryStats struct {
@@ -114,4 +134,117 @@ type QueueItem struct {
 	Position  int       `json:"position"`
 	MR        *MergeRequest `json:"mr"`
 	Age       string    `json:"age"`
+}
+
+// State transition errors.
+var (
+	// ErrInvalidTransition is returned when a state transition is not allowed.
+	ErrInvalidTransition = errors.New("invalid state transition")
+
+	// ErrClosedImmutable is returned when attempting to change a closed MR.
+	ErrClosedImmutable = errors.New("closed merge requests are immutable")
+)
+
+// ValidateTransition checks if a state transition from -> to is valid.
+//
+// Valid transitions:
+//   - open → in_progress (Engineer claims MR)
+//   - in_progress → closed (merge success or rejection)
+//   - in_progress → open (failure, reassign to worker)
+//   - open → closed (manual rejection)
+//
+// Invalid:
+//   - closed → anything (immutable once closed)
+func ValidateTransition(from, to MRStatus) error {
+	// Same state is always valid (no-op)
+	if from == to {
+		return nil
+	}
+
+	// Closed is immutable - cannot transition to anything else
+	if from == MRClosed {
+		return fmt.Errorf("%w: cannot change status from closed", ErrClosedImmutable)
+	}
+
+	// Check valid transitions
+	switch from {
+	case MROpen:
+		// open → in_progress: Engineer claims MR
+		// open → closed: manual rejection
+		if to == MRInProgress || to == MRClosed {
+			return nil
+		}
+	case MRInProgress:
+		// in_progress → closed: merge success or rejection
+		// in_progress → open: failure, reassign to worker
+		if to == MRClosed || to == MROpen {
+			return nil
+		}
+	}
+
+	return fmt.Errorf("%w: %s → %s is not allowed", ErrInvalidTransition, from, to)
+}
+
+// SetStatus updates the MR status after validating the transition.
+// Returns an error if the transition is not allowed.
+func (mr *MergeRequest) SetStatus(newStatus MRStatus) error {
+	if err := ValidateTransition(mr.Status, newStatus); err != nil {
+		return err
+	}
+	mr.Status = newStatus
+	return nil
+}
+
+// Close closes the MR with the given reason after validating the transition.
+// Returns an error if the MR cannot be closed from its current state.
+// Once closed, an MR cannot be closed again (even with a different reason).
+func (mr *MergeRequest) Close(reason CloseReason) error {
+	// Closed MRs are immutable - cannot be closed again
+	if mr.Status == MRClosed {
+		return fmt.Errorf("%w: MR is already closed", ErrClosedImmutable)
+	}
+	if err := ValidateTransition(mr.Status, MRClosed); err != nil {
+		return err
+	}
+	mr.Status = MRClosed
+	mr.CloseReason = reason
+	return nil
+}
+
+// Reopen reopens a failed MR (transitions from in_progress back to open).
+// Returns an error if the transition is not allowed.
+func (mr *MergeRequest) Reopen() error {
+	if mr.Status != MRInProgress {
+		return fmt.Errorf("%w: can only reopen from in_progress, current status is %s",
+			ErrInvalidTransition, mr.Status)
+	}
+	mr.Status = MROpen
+	mr.CloseReason = "" // Clear any previous close reason
+	return nil
+}
+
+// Claim transitions the MR from open to in_progress (Engineer claims it).
+// Returns an error if the transition is not allowed.
+func (mr *MergeRequest) Claim() error {
+	if mr.Status != MROpen {
+		return fmt.Errorf("%w: can only claim from open, current status is %s",
+			ErrInvalidTransition, mr.Status)
+	}
+	mr.Status = MRInProgress
+	return nil
+}
+
+// IsClosed returns true if the MR is in a closed state.
+func (mr *MergeRequest) IsClosed() bool {
+	return mr.Status == MRClosed
+}
+
+// IsOpen returns true if the MR is in an open state (waiting for processing).
+func (mr *MergeRequest) IsOpen() bool {
+	return mr.Status == MROpen
+}
+
+// IsInProgress returns true if the MR is currently being processed.
+func (mr *MergeRequest) IsInProgress() bool {
+	return mr.Status == MRInProgress
 }

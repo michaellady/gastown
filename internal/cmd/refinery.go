@@ -274,14 +274,27 @@ func runRefineryQueue(cmd *cobra.Command, args []string) error {
 			status = style.Bold.Render("[processing]")
 		} else {
 			switch item.MR.Status {
-			case refinery.MRPending:
-				status = style.Dim.Render("[pending]")
-			case refinery.MRMerged:
-				status = style.Bold.Render("[merged]")
-			case refinery.MRFailed:
-				status = style.Dim.Render("[failed]")
-			case refinery.MRSkipped:
-				status = style.Dim.Render("[skipped]")
+			case refinery.MROpen:
+				if item.MR.Error != "" {
+					status = style.Dim.Render("[needs-rework]")
+				} else {
+					status = style.Dim.Render("[pending]")
+				}
+			case refinery.MRInProgress:
+				status = style.Bold.Render("[processing]")
+			case refinery.MRClosed:
+				switch item.MR.CloseReason {
+				case refinery.CloseReasonMerged:
+					status = style.Bold.Render("[merged]")
+				case refinery.CloseReasonRejected:
+					status = style.Dim.Render("[rejected]")
+				case refinery.CloseReasonConflict:
+					status = style.Dim.Render("[conflict]")
+				case refinery.CloseReasonSuperseded:
+					status = style.Dim.Render("[superseded]")
+				default:
+					status = style.Dim.Render("[closed]")
+				}
 			}
 		}
 
