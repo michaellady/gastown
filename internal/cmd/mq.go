@@ -72,13 +72,20 @@ Auto-detection:
   - Issue: parsed from branch name (e.g., polecat/Nux/gt-xyz → gt-xyz)
   - Worker: parsed from branch name
   - Rig: detected from current directory
-  - Target: main (or integration/<epic> if --epic specified)
+  - Target: automatically determined (see below)
   - Priority: inherited from source issue
+
+Target branch auto-detection:
+  1. If --epic is specified: target integration/<epic>
+  2. If source issue has a parent epic with integration/<epic> branch: target it
+  3. Otherwise: target main
+
+This ensures batch work on epics automatically flows to integration branches.
 
 Examples:
   gt mq submit                           # Auto-detect everything
   gt mq submit --issue gt-abc            # Explicit issue
-  gt mq submit --epic gt-xyz             # Target integration branch
+  gt mq submit --epic gt-xyz             # Target integration branch explicitly
   gt mq submit --priority 0              # Override priority (P0)`,
 	RunE: runMqSubmit,
 }
@@ -382,14 +389,24 @@ func runMqSubmit(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("cannot determine source issue from branch '%s'; use --issue to specify", branch)
 	}
 
+	// Initialize beads for looking up source issue
+	bd := beads.New(cwd)
+
 	// Determine target branch
 	target := "main"
 	if mqSubmitEpic != "" {
+		// Explicit --epic flag takes precedence
 		target = "integration/" + mqSubmitEpic
+	} else {
+		// Auto-detect: check if source issue has a parent epic with an integration branch
+		autoTarget, err := detectIntegrationBranch(bd, g, issueID)
+		if err != nil {
+			// Non-fatal: log and continue with main as target
+			fmt.Printf("  %s\n", style.Dim.Render(fmt.Sprintf("(note: %v)", err)))
+		} else if autoTarget != "" {
+			target = autoTarget
+		}
 	}
-
-	// Initialize beads
-	bd := beads.New(cwd)
 
 	// Get source issue for priority inheritance
 	var priority int
@@ -1468,4 +1485,54 @@ func resetHard(g *git.Git, ref string) error {
 	cmd := exec.Command("git", "reset", "--hard", ref)
 	cmd.Dir = g.WorkDir()
 	return cmd.Run()
+}
+
+// detectIntegrationBranch checks if an issue is a child of an epic that has an integration branch.
+// Returns the integration branch target (e.g., "integration/gt-epic") if found, or "" if not.
+func detectIntegrationBranch(bd *beads.Beads, g *git.Git, issueID string) (string, error) {
+	// Get the source issue
+	issue, err := bd.Show(issueID)
+	if err != nil {
+		return "", fmt.Errorf("looking up issue %s: %w", issueID, err)
+	}
+
+	// Check if issue has a parent
+	if issue.Parent == "" {
+		return "", nil // No parent, no integration branch
+	}
+
+	// Get the parent issue
+	parent, err := bd.Show(issue.Parent)
+	if err != nil {
+		return "", fmt.Errorf("looking up parent %s: %w", issue.Parent, err)
+	}
+
+	// Check if parent is an epic
+	if parent.Type != "epic" {
+		return "", nil // Parent is not an epic
+	}
+
+	// Check if integration branch exists
+	integrationBranch := "integration/" + parent.ID
+
+	// Check local first (faster)
+	exists, err := g.BranchExists(integrationBranch)
+	if err != nil {
+		return "", fmt.Errorf("checking local branch: %w", err)
+	}
+	if exists {
+		return integrationBranch, nil
+	}
+
+	// Check remote
+	exists, err = g.RemoteBranchExists("origin", integrationBranch)
+	if err != nil {
+		// Remote check failure is non-fatal
+		return "", nil
+	}
+	if exists {
+		return integrationBranch, nil
+	}
+
+	return "", nil // No integration branch found
 }
