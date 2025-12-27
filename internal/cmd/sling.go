@@ -130,8 +130,38 @@ func runSling(cmd *cobra.Command, args []string) error {
 
 		// Try as bead first
 		if err := verifyBeadExists(firstArg); err == nil {
-			// It's a bead
-			beadID = firstArg
+			// It's a bead - check if it's a proto (template) that needs instantiation
+			if isProto, err := isBeadProto(firstArg); err == nil && isProto {
+				// It's a proto - check if we have --var flags
+				if len(slingVars) > 0 {
+					if slingDryRun {
+						// Dry run - just indicate what would happen
+						fmt.Printf("Proto detected, would pour with variables:\n")
+						for _, v := range slingVars {
+							fmt.Printf("  --var %s\n", v)
+						}
+						// Use original proto ID for remaining checks (it won't actually be slung)
+						beadID = firstArg
+					} else {
+						// Auto-pour the proto with variables
+						fmt.Printf("Proto detected, pouring with variables...\n")
+						pouredID, pourErr := pourProtoWithVars(firstArg, slingVars)
+						if pourErr != nil {
+							return fmt.Errorf("auto-pouring proto: %w", pourErr)
+						}
+						fmt.Printf("%s Poured proto %s → %s\n", style.Bold.Render("✓"), firstArg, pouredID)
+						beadID = pouredID
+					}
+				} else {
+					// Proto without --var - warn user about unsubstituted variables
+					fmt.Printf("%s Slinging proto without --var ({{variables}} won't be substituted)\n",
+						style.Dim.Render("Warning:"))
+					beadID = firstArg
+				}
+			} else {
+				// Regular bead (not a proto)
+				beadID = firstArg
+			}
 		} else {
 			// Not a bead - try as standalone formula
 			if err := verifyFormulaExists(firstArg); err == nil {
@@ -631,4 +661,63 @@ func runSlingFormula(args []string) error {
 	}
 
 	return nil
+}
+
+// isBeadProto checks if a bead has the "template" label (is a proto/molecule template).
+func isBeadProto(beadID string) (bool, error) {
+	cmd := exec.Command("bd", "show", beadID, "--json")
+	out, err := cmd.Output()
+	if err != nil {
+		return false, fmt.Errorf("fetching bead: %w", err)
+	}
+
+	// Parse the bead to check labels
+	var issues []struct {
+		Labels []string `json:"labels"`
+	}
+	if err := json.Unmarshal(out, &issues); err != nil {
+		return false, fmt.Errorf("parsing bead: %w", err)
+	}
+	if len(issues) == 0 {
+		return false, fmt.Errorf("bead not found")
+	}
+
+	// Check for "template" label
+	for _, label := range issues[0].Labels {
+		if label == "template" {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// pourProtoWithVars instantiates a proto with variable substitution.
+// Returns the new molecule ID.
+func pourProtoWithVars(protoID string, vars []string) (string, error) {
+	// Build pour command: bd --no-daemon pour <id> --var key=val --json
+	args := []string{"--no-daemon", "pour", protoID}
+	for _, v := range vars {
+		args = append(args, "--var", v)
+	}
+	args = append(args, "--json")
+
+	cmd := exec.Command("bd", args...)
+	cmd.Stderr = os.Stderr
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("bd pour failed: %w", err)
+	}
+
+	// Parse the result to get new_epic_id
+	var result struct {
+		NewEpicID string `json:"new_epic_id"`
+	}
+	if err := json.Unmarshal(out, &result); err != nil {
+		return "", fmt.Errorf("parsing pour output: %w", err)
+	}
+	if result.NewEpicID == "" {
+		return "", fmt.Errorf("pour returned empty new_epic_id")
+	}
+
+	return result.NewEpicID, nil
 }
