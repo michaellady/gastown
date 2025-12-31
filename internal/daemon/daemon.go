@@ -17,7 +17,6 @@ import (
 	"github.com/steveyegge/gastown/internal/boot"
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/feed"
-	"github.com/steveyegge/gastown/internal/keepalive"
 	"github.com/steveyegge/gastown/internal/polecat"
 	"github.com/steveyegge/gastown/internal/tmux"
 )
@@ -85,13 +84,12 @@ func (d *Daemon) Run() error {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM, syscall.SIGUSR1)
 
-	// Dynamic heartbeat timer with exponential backoff based on activity
-	// Start with base interval
-	nextInterval := d.config.HeartbeatInterval
-	timer := time.NewTimer(nextInterval)
+	// Fixed recovery-focused heartbeat (no activity-based backoff)
+	// Normal wake is handled by feed subscription (bd activity --follow)
+	timer := time.NewTimer(recoveryHeartbeatInterval)
 	defer timer.Stop()
 
-	d.logger.Printf("Daemon running, initial heartbeat interval %v", nextInterval)
+	d.logger.Printf("Daemon running, recovery heartbeat interval %v", recoveryHeartbeatInterval)
 
 	// Start feed curator goroutine
 	d.curator = feed.NewCurator(d.config.TownRoot)
@@ -123,62 +121,17 @@ func (d *Daemon) Run() error {
 		case <-timer.C:
 			d.heartbeat(state)
 
-			// Calculate next interval based on activity
-			nextInterval = d.calculateHeartbeatInterval()
-			timer.Reset(nextInterval)
-			d.logger.Printf("Next heartbeat in %v", nextInterval)
+			// Fixed recovery interval (no activity-based backoff)
+			timer.Reset(recoveryHeartbeatInterval)
 		}
 	}
 }
 
-// Backoff thresholds for exponential slowdown when idle
-const (
-	// Base interval when there's recent activity
-	baseInterval = 5 * time.Minute
-
-	// Tier thresholds for backoff
-	tier1Threshold = 5 * time.Minute  // 0-5 min idle → 5 min interval
-	tier2Threshold = 15 * time.Minute // 5-15 min idle → 10 min interval
-	tier3Threshold = 45 * time.Minute // 15-45 min idle → 30 min interval
-	// 45+ min idle → 60 min interval (max)
-
-	// Corresponding intervals
-	tier1Interval = 5 * time.Minute
-	tier2Interval = 10 * time.Minute
-	tier3Interval = 30 * time.Minute
-	tier4Interval = 60 * time.Minute // max
-)
-
-// calculateHeartbeatInterval determines the next heartbeat interval based on activity.
-// Reads ~/gt/daemon/activity.json to determine how long since the last gt/bd command.
-// Returns exponentially increasing intervals as idle time grows.
-//
-// | Idle Duration | Next Heartbeat |
-// |---------------|----------------|
-// | 0-5 min       | 5 min (base)   |
-// | 5-15 min      | 10 min         |
-// | 15-45 min     | 30 min         |
-// | 45+ min       | 60 min (max)   |
-func (d *Daemon) calculateHeartbeatInterval() time.Duration {
-	activity := keepalive.ReadTownActivity()
-	if activity == nil {
-		// No activity file - assume recent activity (might be first run)
-		return baseInterval
-	}
-
-	idleDuration := activity.Age()
-
-	switch {
-	case idleDuration < tier1Threshold:
-		return tier1Interval
-	case idleDuration < tier2Threshold:
-		return tier2Interval
-	case idleDuration < tier3Threshold:
-		return tier3Interval
-	default:
-		return tier4Interval
-	}
-}
+// recoveryHeartbeatInterval is the fixed interval for recovery-focused daemon.
+// Normal wake is handled by feed subscription (bd activity --follow).
+// The daemon is a safety net for dead sessions, GUPP violations, and orphaned work.
+// 10 minutes is long enough to avoid unnecessary overhead, short enough to catch issues.
+const recoveryHeartbeatInterval = 10 * time.Minute
 
 // heartbeat performs one heartbeat cycle.
 // The daemon is recovery-focused: it ensures agents are running and detects failures.

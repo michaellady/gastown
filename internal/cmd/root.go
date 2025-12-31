@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/steveyegge/gastown/internal/keepalive"
 )
 
 var rootCmd = &cobra.Command{
@@ -17,16 +16,6 @@ var rootCmd = &cobra.Command{
 
 It coordinates agent spawning, work distribution, and communication
 across distributed teams of AI agents working on shared codebases.`,
-	PersistentPreRun: func(cmd *cobra.Command, args []string) {
-		// Signal agent activity by touching keepalive file
-		// Build command path: gt status, gt mail send, etc.
-		cmdPath := buildCommandPath(cmd)
-		keepalive.TouchWithArgs(cmdPath, args)
-
-		// Also signal town-level activity for daemon exponential backoff
-		// This resets the backoff when any gt command runs
-		keepalive.TouchTownActivity(cmdPath)
-	},
 }
 
 // Execute runs the root command and returns an exit code.
