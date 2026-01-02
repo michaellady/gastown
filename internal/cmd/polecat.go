@@ -433,11 +433,8 @@ func runPolecatList(cmd *cobra.Command, args []string) error {
 			sessionStatus = style.Success.Render("●")
 		}
 
-		// Normalize state for display (legacy idle/active → working)
+		// Display actual state (no normalization - idle means idle)
 		displayState := p.State
-		if p.State == polecat.StateIdle || p.State == polecat.StateActive {
-			displayState = polecat.StateWorking
-		}
 
 		// State color
 		stateStr := string(displayState)
