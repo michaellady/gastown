@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/steveyegge/gastown/internal/beads"
@@ -471,6 +472,20 @@ func (e *Engineer) handleSuccessFromQueue(mr *mrqueue.MR, result ProcessResult) 
 		fmt.Fprintf(e.output, "[Engineer] Warning: failed to log merged event: %v\n", err)
 	}
 
+	// Release merge slot if this was a conflict resolution
+	// The slot is held while conflict resolution is in progress
+	holder := e.rig.Name + "/refinery"
+	if err := e.beads.MergeSlotRelease(holder); err != nil {
+		// Not an error if slot wasn't held - it's optional
+		// Only log if it seems like an actual issue
+		errStr := err.Error()
+		if !strings.Contains(errStr, "not held") && !strings.Contains(errStr, "not found") {
+			fmt.Fprintf(e.output, "[Engineer] Warning: failed to release merge slot: %v\n", err)
+		}
+	} else {
+		fmt.Fprintf(e.output, "[Engineer] Released merge slot\n")
+	}
+
 	// 1. Close source issue with reference to MR
 	if mr.SourceIssue != "" {
 		closeReason := fmt.Sprintf("Merged in %s", mr.ID)
@@ -551,7 +566,37 @@ func (e *Engineer) handleFailureFromQueue(mr *mrqueue.MR, result ProcessResult) 
 //   Priority: inherit from original + boost (P2 -> P1)
 //   Parent: original MR bead
 //   Description: metadata including branch, conflict SHA, etc.
+//
+// Merge Slot Integration:
+// Before creating a conflict resolution task, we acquire the merge-slot for this rig.
+// This serializes conflict resolution - only one polecat can resolve conflicts at a time.
+// If the slot is already held, we skip creating the task and let the MR stay in queue.
+// When the current resolution completes and merges, the slot is released.
 func (e *Engineer) createConflictResolutionTask(mr *mrqueue.MR, result ProcessResult) (string, error) {
+	// === MERGE SLOT GATE: Serialize conflict resolution ===
+	// Ensure merge slot exists (idempotent)
+	slotID, err := e.beads.MergeSlotEnsureExists()
+	if err != nil {
+		fmt.Fprintf(e.output, "[Engineer] Warning: could not ensure merge slot: %v\n", err)
+		// Continue anyway - slot is optional for now
+	} else {
+		// Try to acquire the merge slot
+		holder := e.rig.Name + "/refinery"
+		status, err := e.beads.MergeSlotAcquire(holder, false)
+		if err != nil {
+			fmt.Fprintf(e.output, "[Engineer] Warning: could not acquire merge slot: %v\n", err)
+			// Continue anyway - slot is optional
+		} else if !status.Available && status.Holder != "" && status.Holder != holder {
+			// Slot is held by someone else - skip creating the task
+			// The MR stays in queue and will retry when slot is released
+			fmt.Fprintf(e.output, "[Engineer] Merge slot held by %s - deferring conflict resolution\n", status.Holder)
+			fmt.Fprintf(e.output, "[Engineer] MR %s will retry after current resolution completes\n", mr.ID)
+			return "", nil // Not an error - just deferred
+		}
+		// Either we acquired the slot, or status indicates we already hold it
+		fmt.Fprintf(e.output, "[Engineer] Acquired merge slot: %s\n", slotID)
+	}
+
 	// Get the current main SHA for conflict tracking
 	mainSHA, err := e.git.Rev("origin/" + mr.Target)
 	if err != nil {
