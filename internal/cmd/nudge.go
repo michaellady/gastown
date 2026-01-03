@@ -162,7 +162,7 @@ func runNudge(cmd *cobra.Command, args []string) error {
 
 		// Log nudge event
 		if townRoot, err := workspace.FindFromCwd(); err == nil && townRoot != "" {
-			LogNudge(townRoot, "deacon", message)
+			_ = LogNudge(townRoot, "deacon", message)
 		}
 		_ = events.LogFeed(events.TypeNudge, sender, events.NudgePayload("", "deacon", message))
 		return nil
@@ -201,7 +201,7 @@ func runNudge(cmd *cobra.Command, args []string) error {
 
 		// Log nudge event
 		if townRoot, err := workspace.FindFromCwd(); err == nil && townRoot != "" {
-			LogNudge(townRoot, target, message)
+			_ = LogNudge(townRoot, target, message)
 		}
 		_ = events.LogFeed(events.TypeNudge, sender, events.NudgePayload(rigName, target, message))
 	} else {
@@ -222,7 +222,7 @@ func runNudge(cmd *cobra.Command, args []string) error {
 
 		// Log nudge event
 		if townRoot, err := workspace.FindFromCwd(); err == nil && townRoot != "" {
-			LogNudge(townRoot, target, message)
+			_ = LogNudge(townRoot, target, message)
 		}
 		_ = events.LogFeed(events.TypeNudge, sender, events.NudgePayload("", target, message))
 	}

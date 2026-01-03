@@ -190,12 +190,12 @@ func (m *Manager) IsComplete(swarmID string) (bool, error) {
 // isValidTransition checks if a state transition is allowed.
 func isValidTransition(from, to SwarmState) bool {
 	transitions := map[SwarmState][]SwarmState{
-		SwarmCreated:   {SwarmActive, SwarmCancelled},
-		SwarmActive:    {SwarmMerging, SwarmFailed, SwarmCancelled},
-		SwarmMerging:   {SwarmLanded, SwarmFailed, SwarmCancelled},
+		SwarmCreated:   {SwarmActive, SwarmCanceled},
+		SwarmActive:    {SwarmMerging, SwarmFailed, SwarmCanceled},
+		SwarmMerging:   {SwarmLanded, SwarmFailed, SwarmCanceled},
 		SwarmLanded:    {}, // Terminal
 		SwarmFailed:    {}, // Terminal
-		SwarmCancelled: {}, // Terminal
+		SwarmCanceled: {}, // Terminal
 	}
 
 	allowed, ok := transitions[from]

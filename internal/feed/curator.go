@@ -291,7 +291,7 @@ func (c *Curator) writeFeedEvent(event *events.Event) {
 	}
 	defer f.Close()
 
-	f.Write(data)
+	_, _ = f.Write(data)
 }
 
 // generateSummary creates a human-readable summary of an event.

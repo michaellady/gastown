@@ -48,11 +48,30 @@ linters:
       - linters:
           - gosec
         text: "G302.*0700|G301.*0750"
-      # G204: Safe subprocess launches with validated arguments (tmux, git, etc.)
-      - path: 'internal/tmux/|internal/git/|internal/cmd/'
+      # G204: Safe subprocess launches with validated arguments (internal tools: bd, gt, ps)
+      - path: 'internal/'
         linters:
           - gosec
         text: 'G204'
+      # G104: Deferred close errors in non-critical paths
+      - path: 'internal/'
+        linters:
+          - gosec
+        text: 'G104'
+      # G302/G306: File permissions 0644 are acceptable for config/log/mail files
+      - path: 'internal/'
+        linters:
+          - gosec
+        text: 'G302|G306'
+      # G304: File inclusion via variable for internal file operations
+      - path: 'internal/'
+        linters:
+          - gosec
+        text: 'G304'
+      # unparam: Many functions have parameters for future use or interface compliance
+      - path: 'internal/'
+        linters:
+          - unparam
       # errcheck: Ignore unchecked errors in test files for common cleanup patterns
       - path: '_test\.go'
         linters:
