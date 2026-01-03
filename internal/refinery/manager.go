@@ -137,7 +137,16 @@ func (m *Manager) Start(foreground bool) error {
 	// Background mode: check if session already exists
 	running, _ := t.HasSession(sessionID)
 	if running {
-		return ErrAlreadyRunning
+		// Session exists - check if Claude is actually running (healthy vs zombie)
+		if t.IsClaudeRunning(sessionID) {
+			// Healthy - Claude is running
+			return ErrAlreadyRunning
+		}
+		// Zombie - tmux alive but Claude dead. Kill and recreate.
+		fmt.Fprintln(m.output, "⚠ Detected zombie session (tmux alive, Claude dead). Recreating...")
+		if err := t.KillSession(sessionID); err != nil {
+			return fmt.Errorf("killing zombie session: %w", err)
+		}
 	}
 
 	// Also check via PID for backwards compatibility

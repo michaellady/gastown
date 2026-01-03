@@ -284,7 +284,8 @@ func witnessSessionName(rigName string) string {
 }
 
 // ensureWitnessSession creates a witness tmux session if it doesn't exist.
-// Returns true if a new session was created, false if it already existed.
+// Returns true if a new session was created, false if it already existed (and is healthy).
+// Implements 'ensure' semantics: if session exists but Claude is dead (zombie), kills and recreates.
 func ensureWitnessSession(rigName string, r *rig.Rig) (bool, error) {
 	t := tmux.NewTmux()
 	sessionName := witnessSessionName(rigName)
@@ -296,7 +297,16 @@ func ensureWitnessSession(rigName string, r *rig.Rig) (bool, error) {
 	}
 
 	if running {
-		return false, nil
+		// Session exists - check if Claude is actually running (healthy vs zombie)
+		if t.IsClaudeRunning(sessionName) {
+			// Healthy - Claude is running
+			return false, nil
+		}
+		// Zombie - tmux alive but Claude dead. Kill and recreate.
+		fmt.Printf("%s Detected zombie session (tmux alive, Claude dead). Recreating...\n", style.Dim.Render("⚠"))
+		if err := t.KillSession(sessionName); err != nil {
+			return false, fmt.Errorf("killing zombie session: %w", err)
+		}
 	}
 
 	// Working directory is the witness's rig clone (if it exists) or witness dir
