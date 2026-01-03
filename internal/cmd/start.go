@@ -763,7 +763,8 @@ func runStartCrew(cmd *cobra.Command, args []string) error {
 		if !t.IsClaudeRunning(sessionID) {
 			// Claude has exited, restart it
 			fmt.Printf("Session exists, restarting Claude...\n")
-			if err := t.SendKeys(sessionID, config.GetRuntimeCommand(r.Path)); err != nil {
+			claudeCmd := config.BuildCrewStartupCommand(rigName, name, r.Path, "")
+			if err := t.SendKeys(sessionID, claudeCmd); err != nil {
 				return fmt.Errorf("restarting claude: %w", err)
 			}
 			// Wait for Claude to start, then prime
@@ -803,8 +804,9 @@ func runStartCrew(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("waiting for shell: %w", err)
 		}
 
-		// Start claude with skip permissions
-		if err := t.SendKeys(sessionID, config.GetRuntimeCommand(r.Path)); err != nil {
+		// Start claude with skip permissions and proper env vars for seance
+		claudeCmd := config.BuildCrewStartupCommand(rigName, name, r.Path, "")
+		if err := t.SendKeys(sessionID, claudeCmd); err != nil {
 			return fmt.Errorf("starting claude: %w", err)
 		}
 
