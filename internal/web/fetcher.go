@@ -13,6 +13,12 @@ import (
 	"github.com/steveyegge/gastown/internal/workspace"
 )
 
+// MergeQueueRepos lists the GitHub repos to query for the merge queue.
+var MergeQueueRepos = []string{
+	"michaellady/roxas",
+	"michaellady/gastown",
+}
+
 // LiveConvoyFetcher fetches convoy data from beads.
 type LiveConvoyFetcher struct {
 	townBeads string
@@ -297,4 +303,129 @@ func (f *LiveConvoyFetcher) getWorkersForIssues(issueIDs []string) map[string]*w
 	}
 
 	return result
+}
+
+// FetchMergeQueue fetches open PRs from configured repos.
+func (f *LiveConvoyFetcher) FetchMergeQueue() []MergeQueuePR {
+	var prs []MergeQueuePR
+
+	for _, repo := range MergeQueueRepos {
+		repoPRs := f.fetchRepoPRs(repo)
+		prs = append(prs, repoPRs...)
+	}
+
+	return prs
+}
+
+// fetchRepoPRs fetches open PRs for a single repo using gh CLI.
+func (f *LiveConvoyFetcher) fetchRepoPRs(repo string) []MergeQueuePR {
+	// gh pr list --repo <repo> --state open --json number,title,url,statusCheckRollup,mergeable
+	args := []string{
+		"pr", "list",
+		"--repo", repo,
+		"--state", "open",
+		"--json", "number,title,url,statusCheckRollup,mergeable",
+	}
+
+	cmd := exec.Command("gh", args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return nil
+	}
+
+	var ghPRs []struct {
+		Number            int    `json:"number"`
+		Title             string `json:"title"`
+		URL               string `json:"url"`
+		Mergeable         string `json:"mergeable"`
+		StatusCheckRollup []struct {
+			Conclusion string `json:"conclusion"`
+			Status     string `json:"status"`
+		} `json:"statusCheckRollup"`
+	}
+
+	if err := json.Unmarshal(stdout.Bytes(), &ghPRs); err != nil {
+		return nil
+	}
+
+	// Extract short repo name (last part after /)
+	repoShort := repo
+	if idx := strings.LastIndex(repo, "/"); idx >= 0 {
+		repoShort = repo[idx+1:]
+	}
+
+	result := make([]MergeQueuePR, 0, len(ghPRs))
+	for _, pr := range ghPRs {
+		mqPR := MergeQueuePR{
+			Number:   pr.Number,
+			Title:    pr.Title,
+			Repo:     repoShort,
+			RepoFull: repo,
+			URL:      pr.URL,
+		}
+
+		// Determine CI status from statusCheckRollup
+		mqPR.CIStatus = determineCIStatus(pr.StatusCheckRollup)
+
+		// Determine mergeable status
+		mqPR.Mergeable = pr.Mergeable == "MERGEABLE"
+
+		// Determine color class
+		mqPR.ColorClass = determinePRColor(mqPR.CIStatus, mqPR.Mergeable)
+
+		result = append(result, mqPR)
+	}
+
+	return result
+}
+
+// determineCIStatus examines status checks and returns overall status.
+func determineCIStatus(checks []struct {
+	Conclusion string `json:"conclusion"`
+	Status     string `json:"status"`
+}) string {
+	if len(checks) == 0 {
+		return "pending"
+	}
+
+	hasFailure := false
+	hasPending := false
+
+	for _, check := range checks {
+		switch check.Conclusion {
+		case "FAILURE", "CANCELLED", "CANCELED", "TIMED_OUT": //nolint:misspell // GitHub API uses CANCELLED
+			hasFailure = true
+		case "SUCCESS":
+			// continue
+		default:
+			// If conclusion is empty, check status
+			if check.Status == "IN_PROGRESS" || check.Status == "QUEUED" || check.Status == "PENDING" {
+				hasPending = true
+			} else if check.Conclusion == "" {
+				hasPending = true
+			}
+		}
+	}
+
+	if hasFailure {
+		return "failure"
+	}
+	if hasPending {
+		return "pending"
+	}
+	return "success"
+}
+
+// determinePRColor returns the CSS color class for a PR based on its status.
+func determinePRColor(ciStatus string, mergeable bool) string {
+	if ciStatus == "failure" || !mergeable {
+		return "mq-red"
+	}
+	if ciStatus == "pending" {
+		return "mq-yellow"
+	}
+	return "mq-green"
 }

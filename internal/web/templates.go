@@ -14,7 +14,20 @@ var templateFS embed.FS
 
 // ConvoyData represents data passed to the convoy template.
 type ConvoyData struct {
-	Convoys []ConvoyRow
+	Convoys    []ConvoyRow
+	MergeQueue []MergeQueuePR
+}
+
+// MergeQueuePR represents a pull request in the merge queue.
+type MergeQueuePR struct {
+	Number     int
+	Title      string
+	Repo       string    // Short name: "roxas", "gastown"
+	RepoFull   string    // Full name: "michaellady/roxas"
+	URL        string    // Link to the PR on GitHub
+	CIStatus   string    // "success", "failure", "pending"
+	Mergeable  bool      // Whether the PR can be merged
+	ColorClass string    // CSS class: "mq-green", "mq-yellow", "mq-red"
 }
 
 // ConvoyRow represents a single convoy in the dashboard.

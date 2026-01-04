@@ -12,12 +12,17 @@ import (
 
 // MockConvoyFetcher is a mock implementation for testing.
 type MockConvoyFetcher struct {
-	Convoys []ConvoyRow
-	Error   error
+	Convoys    []ConvoyRow
+	MergeQueue []MergeQueuePR
+	Error      error
 }
 
 func (m *MockConvoyFetcher) FetchConvoys() ([]ConvoyRow, error) {
 	return m.Convoys, m.Error
+}
+
+func (m *MockConvoyFetcher) FetchMergeQueue() []MergeQueuePR {
+	return m.MergeQueue
 }
 
 func TestConvoyHandler_RendersTemplate(t *testing.T) {
