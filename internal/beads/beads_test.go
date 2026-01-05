@@ -1029,6 +1029,15 @@ func TestParseAgentBeadID(t *testing.T) {
 		{"gt-gastown-polecat-capable", "gastown", "polecat", "capable", true},
 		// Names with hyphens
 		{"gt-gastown-polecat-my-agent", "gastown", "polecat", "my-agent", true},
+		// Hyphenated rig names (GitHub issue #78)
+		{"gt-webapp-claude-code-polecat-ace", "webapp-claude-code", "polecat", "ace", true},
+		{"gt-webapp-claude-code-witness", "webapp-claude-code", "witness", "", true},
+		{"gt-webapp-claude-code-refinery", "webapp-claude-code", "refinery", "", true},
+		{"gt-my-cool-rig-crew-worker", "my-cool-rig", "crew", "worker", true},
+		{"gt-a-b-c-polecat-x-y-z", "a-b-c", "polecat", "x-y-z", true}, // Both rig and name have hyphens
+		// Dog agents (town-level named)
+		{"gt-dog-alpha", "", "dog", "alpha", true},
+		{"gt-dog-my-cool-dog", "", "dog", "my-cool-dog", true},
 		// Parseable but not valid agent roles (IsAgentSessionBead will reject)
 		{"gt-abc123", "", "abc123", "", true}, // Parses as town-level but not valid role
 		// Other prefixes (bd-, hq-)
@@ -1081,6 +1090,10 @@ func TestIsAgentSessionBead(t *testing.T) {
 		{"bd-beads-refinery", true},
 		{"bd-beads-crew-joe", true},
 		{"bd-beads-polecat-pearl", true},
+		// Hyphenated rig names (GitHub issue #78)
+		{"gt-webapp-claude-code-polecat-ace", true},
+		{"gt-webapp-claude-code-witness", true},
+		{"gt-my-cool-rig-crew-worker", true},
 		// Regular work beads (should return false)
 		{"gt-abc123", false},
 		{"gt-sb6m4", false},

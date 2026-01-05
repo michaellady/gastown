@@ -1333,11 +1333,27 @@ func PolecatBeadID(rig, name string) string {
 	return PolecatBeadIDWithPrefix("gt", rig, name)
 }
 
+// knownRoles is the set of valid agent role names used for role-based ID parsing.
+// This allows parsing IDs with hyphenated rig names like "gt-webapp-claude-code-polecat-ace".
+var knownRoles = map[string]bool{
+	"mayor":    true,
+	"deacon":   true,
+	"witness":  true,
+	"refinery": true,
+	"crew":     true,
+	"polecat":  true,
+	"dog":      true,
+}
+
 // ParseAgentBeadID parses an agent bead ID into its components.
 // Returns rig, role, name, and whether parsing succeeded.
 // For town-level agents, rig will be empty.
 // For singletons, name will be empty.
 // Accepts any valid prefix (e.g., "gt-", "bd-"), not just "gt-".
+//
+// Supports hyphenated rig names by using role-based parsing:
+//   - gt-webapp-claude-code-polecat-ace → rig="webapp-claude-code", role="polecat", name="ace"
+//   - gt-gastown-polecat-my-agent → rig="gastown", role="polecat", name="my-agent"
 func ParseAgentBeadID(id string) (rig, role, name string, ok bool) {
 	// Find the prefix (everything before the first hyphen)
 	// Valid prefixes are 2-3 characters (e.g., "gt", "bd", "hq")
@@ -1349,30 +1365,56 @@ func ParseAgentBeadID(id string) (rig, role, name string, ok bool) {
 	rest := id[hyphenIdx+1:]
 	parts := strings.Split(rest, "-")
 
+	// Use role-based parsing: scan for a known role, then extract rig before it and name after it.
+	// This correctly handles hyphenated rig names like "webapp-claude-code".
+	roleIdx := -1
+	for i, part := range parts {
+		if knownRoles[part] {
+			roleIdx = i
+			break
+		}
+	}
+
+	if roleIdx >= 0 {
+		// Found a known role - parse around it
+		foundRole := parts[roleIdx]
+
+		switch roleIdx {
+		case 0:
+			// Town-level agent: gt-mayor, gt-deacon, gt-dog-alpha
+			if roleIdx+1 < len(parts) {
+				// Has name: gt-dog-alpha, gt-dog-my-dog-name
+				return "", foundRole, strings.Join(parts[roleIdx+1:], "-"), true
+			}
+			// No name: gt-mayor, gt-deacon
+			return "", foundRole, "", true
+		default:
+			// Rig-level agent: everything before role is the rig
+			rigName := strings.Join(parts[:roleIdx], "-")
+			if roleIdx+1 < len(parts) {
+				// Has name: gt-gastown-polecat-ace, gt-webapp-claude-code-polecat-ace
+				return rigName, foundRole, strings.Join(parts[roleIdx+1:], "-"), true
+			}
+			// No name (singleton): gt-gastown-witness, gt-webapp-claude-code-witness
+			return rigName, foundRole, "", true
+		}
+	}
+
+	// No known role found - fall back to positional parsing for backward compatibility.
+	// This handles patterns like "gt-abc123" which parse but aren't valid agent roles.
 	switch len(parts) {
 	case 1:
-		// Town-level: gt-mayor, bd-deacon
+		// Town-level with unknown role: gt-abc123
 		return "", parts[0], "", true
 	case 2:
-		// Could be rig-level singleton (gt-gastown-witness) or
-		// town-level named (gt-dog-alpha for dogs)
-		if parts[0] == "dog" {
-			// Dogs are town-level named agents: gt-dog-<name>
-			return "", "dog", parts[1], true
-		}
-		// Rig-level singleton: gt-gastown-witness
+		// Rig-level singleton with unknown role: gt-rig-unknown
 		return parts[0], parts[1], "", true
 	case 3:
-		// Rig-level named: gt-gastown-crew-max, bd-beads-polecat-pearl
+		// Rig-level named with unknown role: gt-rig-unknown-name
 		return parts[0], parts[1], parts[2], true
 	default:
-		// Handle names with hyphens: gt-gastown-polecat-my-agent-name
-		// or gt-dog-my-agent-name
+		// 4+ parts with no known role: gt-rig-unknown-hyphenated-name
 		if len(parts) >= 3 {
-			if parts[0] == "dog" {
-				// Dog with hyphenated name: gt-dog-my-dog-name
-				return "", "dog", strings.Join(parts[1:], "-"), true
-			}
 			return parts[0], parts[1], strings.Join(parts[2:], "-"), true
 		}
 		return "", "", "", false
