@@ -831,6 +831,95 @@ func (g *Git) CheckUncommittedWork() (*UncommittedWorkStatus, error) {
 	return status, nil
 }
 
+// PushWithUpstream pushes to the remote and sets upstream tracking.
+// Returns the error from the push operation.
+func (g *Git) PushWithUpstream(remote, branch string) error {
+	_, err := g.run("push", "-u", remote, branch)
+	return err
+}
+
+// IsPermissionError returns true if the error is a permission/authentication error.
+func IsPermissionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := err.Error()
+	return strings.Contains(errStr, "Permission denied") ||
+		strings.Contains(errStr, "permission denied") ||
+		strings.Contains(errStr, "Permission to") || // GitHub SSH error format
+		strings.Contains(errStr, "denied to") ||     // GitHub SSH error format
+		strings.Contains(errStr, "403") ||
+		strings.Contains(errStr, "could not read Username") ||
+		strings.Contains(errStr, "Authentication failed") ||
+		strings.Contains(errStr, "fatal: unable to access") ||
+		strings.Contains(errStr, "remote: Permission to") ||
+		strings.Contains(errStr, "remote: Write access")
+}
+
+// ParseGitHubURL extracts owner and repo from a GitHub URL.
+// Supports both HTTPS and SSH formats:
+//   - https://github.com/owner/repo.git
+//   - git@github.com:owner/repo.git
+//
+// Returns (owner, repo, ok). If parsing fails, returns empty strings and false.
+func ParseGitHubURL(url string) (owner, repo string, ok bool) {
+	// SSH format: git@github.com:owner/repo.git
+	if strings.HasPrefix(url, "git@github.com:") {
+		path := strings.TrimPrefix(url, "git@github.com:")
+		path = strings.TrimSuffix(path, ".git")
+		parts := strings.Split(path, "/")
+		if len(parts) == 2 {
+			return parts[0], parts[1], true
+		}
+		return "", "", false
+	}
+
+	// HTTPS format: https://github.com/owner/repo.git
+	if strings.Contains(url, "github.com/") {
+		// Find the github.com/ part and extract path after it
+		idx := strings.Index(url, "github.com/")
+		if idx == -1 {
+			return "", "", false
+		}
+		path := url[idx+len("github.com/"):]
+		path = strings.TrimSuffix(path, ".git")
+		parts := strings.Split(path, "/")
+		if len(parts) >= 2 {
+			return parts[0], parts[1], true
+		}
+	}
+
+	return "", "", false
+}
+
+// GetRemoteOwner returns the GitHub owner for a remote.
+// Returns empty string if the remote URL can't be parsed as a GitHub URL.
+func (g *Git) GetRemoteOwner(remote string) (string, error) {
+	url, err := g.RemoteURL(remote)
+	if err != nil {
+		return "", err
+	}
+	owner, _, ok := ParseGitHubURL(url)
+	if !ok {
+		return "", fmt.Errorf("could not parse GitHub URL: %s", url)
+	}
+	return owner, nil
+}
+
+// GetUpstreamRepoSpec returns the "owner/repo" spec for the origin remote.
+// This is used for PR creation with gh CLI.
+func (g *Git) GetUpstreamRepoSpec() (string, error) {
+	url, err := g.RemoteURL("origin")
+	if err != nil {
+		return "", err
+	}
+	owner, repo, ok := ParseGitHubURL(url)
+	if !ok {
+		return "", fmt.Errorf("could not parse GitHub URL: %s", url)
+	}
+	return owner + "/" + repo, nil
+}
+
 // BranchPushedToRemote checks if a branch has been pushed to the remote.
 // Returns (pushed bool, unpushedCount int, err).
 // This handles polecat branches that don't have upstream tracking configured.

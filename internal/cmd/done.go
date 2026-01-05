@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -157,6 +158,8 @@ func runDone(cmd *cobra.Command, args []string) error {
 
 	// For COMPLETED, we need an issue ID and branch must not be the default branch
 	var mrID string
+	var usedForkWorkflow bool // Track if we used fork workflow for PR creation
+	var forkOwner string      // Fork owner for PR head spec
 	if exitType == ExitCompleted {
 		if branch == defaultBranch || branch == "master" {
 			return fmt.Errorf("cannot submit %s/master branch to merge queue", defaultBranch)
@@ -168,8 +171,43 @@ func runDone(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("checking if branch is pushed: %w", err)
 		}
+
+		// If branch is not pushed, try to push it
 		if !pushed {
-			return fmt.Errorf("branch has %d unpushed commit(s); run 'git push -u origin %s' first", unpushedCount, branch)
+			fmt.Printf("Branch has %d unpushed commit(s), attempting to push...\n", unpushedCount)
+
+			// Try pushing to origin first
+			pushErr := g.PushWithUpstream("origin", branch)
+			if pushErr != nil {
+				// Check if this is a permission error
+				if git.IsPermissionError(pushErr) {
+					// Try fork workflow
+					forkRemote, forkErr := getForkRemote(townRoot, rigName, g)
+					if forkErr != nil {
+						return fmt.Errorf("cannot push to origin (permission denied) and no fork configured: %w\nOriginal error: %v", forkErr, pushErr)
+					}
+
+					fmt.Printf("Origin push failed (permission denied), trying fork remote '%s'...\n", forkRemote)
+
+					// Push to fork
+					if forkPushErr := g.PushWithUpstream(forkRemote, branch); forkPushErr != nil {
+						return fmt.Errorf("failed to push to fork remote '%s': %w", forkRemote, forkPushErr)
+					}
+
+					fmt.Printf("%s Pushed to fork remote '%s'\n", style.Bold.Render("✓"), forkRemote)
+
+					// Get fork owner for PR creation
+					forkOwner, err = g.GetRemoteOwner(forkRemote)
+					if err != nil {
+						return fmt.Errorf("could not get fork owner: %w", err)
+					}
+					usedForkWorkflow = true
+				} else {
+					return fmt.Errorf("failed to push to origin: %w", pushErr)
+				}
+			} else {
+				fmt.Printf("%s Pushed to origin\n", style.Bold.Render("✓"))
+			}
 		}
 
 		// Check that branch has commits ahead of default branch (prevents submitting stale branches)
@@ -261,6 +299,21 @@ func runDone(cmd *cobra.Command, args []string) error {
 			fmt.Printf("%s Work submitted to merge queue\n", style.Bold.Render("✓"))
 			fmt.Printf("  MR ID: %s\n", style.Bold.Render(mrID))
 		}
+
+		// If we used fork workflow, create a GitHub PR
+		var prURL string
+		if usedForkWorkflow && forkOwner != "" {
+			fmt.Printf("\nCreating GitHub PR from fork...\n")
+			var prErr error
+			prURL, prErr = createGitHubPRFromFork(g, forkOwner, branch, target, issueID)
+			if prErr != nil {
+				style.PrintWarning("could not create GitHub PR: %v", prErr)
+				fmt.Printf("  You may need to create the PR manually from %s:%s to %s\n", forkOwner, branch, target)
+			} else {
+				fmt.Printf("%s GitHub PR created: %s\n", style.Bold.Render("✓"), prURL)
+			}
+		}
+
 		fmt.Printf("  Source: %s\n", branch)
 		fmt.Printf("  Target: %s\n", target)
 		fmt.Printf("  Issue: %s\n", issueID)
@@ -268,8 +321,15 @@ func runDone(cmd *cobra.Command, args []string) error {
 			fmt.Printf("  Worker: %s\n", worker)
 		}
 		fmt.Printf("  Priority: P%d\n", priority)
+		if prURL != "" {
+			fmt.Printf("  PR: %s\n", prURL)
+		}
 		fmt.Println()
-		fmt.Printf("%s\n", style.Dim.Render("The Refinery will process your merge request."))
+		if usedForkWorkflow {
+			fmt.Printf("%s\n", style.Dim.Render("Work submitted via fork workflow. PR created for review."))
+		} else {
+			fmt.Printf("%s\n", style.Dim.Render("The Refinery will process your merge request."))
+		}
 	} else if exitType == ExitPhaseComplete {
 		// Phase complete - register as waiter on gate, then recycle
 		fmt.Printf("%s Phase complete, awaiting gate\n", style.Bold.Render("→"))
@@ -480,4 +540,107 @@ func computeCleanupStatus(cwd string) string {
 		return "has_uncommitted"
 	}
 	return "clean"
+}
+
+// getForkRemote returns the fork remote name to use for push.
+// It checks:
+// 1. Rig config fork_remote setting
+// 2. Auto-detect "fork" remote if it exists
+// Returns the remote name or error if no fork remote is available.
+func getForkRemote(townRoot, rigName string, g *git.Git) (string, error) {
+	// Check rig config first
+	rigPath := filepath.Join(townRoot, rigName)
+	if rigCfg, err := rig.LoadRigConfig(rigPath); err == nil && rigCfg.ForkRemote != "" {
+		// Verify the remote exists
+		remotes, err := g.Remotes()
+		if err == nil {
+			for _, r := range remotes {
+				if r == rigCfg.ForkRemote {
+					return rigCfg.ForkRemote, nil
+				}
+			}
+		}
+		return "", fmt.Errorf("configured fork_remote '%s' not found in git remotes", rigCfg.ForkRemote)
+	}
+
+	// Auto-detect: look for common fork remote names
+	remotes, err := g.Remotes()
+	if err != nil {
+		return "", fmt.Errorf("could not list git remotes: %w", err)
+	}
+
+	// Check for common fork remote names in priority order
+	forkNames := []string{"fork", "myfork", "upstream-fork"}
+	for _, name := range forkNames {
+		for _, r := range remotes {
+			if r == name {
+				return name, nil
+			}
+		}
+	}
+
+	// Check if any remote other than "origin" points to a different owner
+	// (likely a fork)
+	originOwner, _ := g.GetRemoteOwner("origin")
+	for _, r := range remotes {
+		if r == "origin" {
+			continue
+		}
+		owner, err := g.GetRemoteOwner(r)
+		if err != nil {
+			continue
+		}
+		if owner != "" && owner != originOwner {
+			// This remote has a different owner - likely a fork
+			return r, nil
+		}
+	}
+
+	return "", fmt.Errorf("no fork remote found; configure fork_remote in rig config or add a 'fork' remote")
+}
+
+// createGitHubPRFromFork creates a GitHub PR from a fork to the upstream repo.
+// Uses gh CLI to create the PR.
+func createGitHubPRFromFork(g *git.Git, forkOwner, branch, targetBranch, issueID string) (string, error) {
+	// Get upstream repo spec (owner/repo)
+	upstreamRepo, err := g.GetUpstreamRepoSpec()
+	if err != nil {
+		return "", fmt.Errorf("could not get upstream repo: %w", err)
+	}
+
+	// Build PR title and body
+	title := fmt.Sprintf("[%s] %s", issueID, branch)
+	body := fmt.Sprintf("Automated PR from Gas Town polecat.\n\nIssue: %s\nBranch: %s", issueID, branch)
+
+	// Create PR using gh CLI
+	// gh pr create --repo <upstream> --head <fork-owner>:<branch> --base <target> --title <title> --body <body>
+	cmd := exec.Command("gh", "pr", "create",
+		"--repo", upstreamRepo,
+		"--head", forkOwner+":"+branch,
+		"--base", targetBranch,
+		"--title", title,
+		"--body", body,
+	)
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("gh pr create failed: %w\nOutput: %s", err, string(output))
+	}
+
+	// Parse PR URL from output (last line typically contains the URL)
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	prURL := ""
+	for _, line := range lines {
+		if strings.Contains(line, "github.com") && strings.Contains(line, "/pull/") {
+			prURL = strings.TrimSpace(line)
+			break
+		}
+	}
+
+	if prURL == "" {
+		// Try to extract any URL-like string
+		prURL = strings.TrimSpace(string(output))
+	}
+
+	return prURL, nil
 }

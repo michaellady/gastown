@@ -1,6 +1,7 @@
 package git
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -385,5 +386,131 @@ func TestCheckConflicts_WithConflict(t *testing.T) {
 	status, _ := g.Status()
 	if !status.Clean {
 		t.Error("expected clean working directory after CheckConflicts")
+	}
+}
+
+func TestParseGitHubURL(t *testing.T) {
+	tests := []struct {
+		name      string
+		url       string
+		wantOwner string
+		wantRepo  string
+		wantOk    bool
+	}{
+		{
+			name:      "SSH URL",
+			url:       "git@github.com:steveyegge/gastown.git",
+			wantOwner: "steveyegge",
+			wantRepo:  "gastown",
+			wantOk:    true,
+		},
+		{
+			name:      "HTTPS URL with .git",
+			url:       "https://github.com/steveyegge/gastown.git",
+			wantOwner: "steveyegge",
+			wantRepo:  "gastown",
+			wantOk:    true,
+		},
+		{
+			name:      "HTTPS URL without .git",
+			url:       "https://github.com/michaellady/gastown",
+			wantOwner: "michaellady",
+			wantRepo:  "gastown",
+			wantOk:    true,
+		},
+		{
+			name:      "SSH URL without .git",
+			url:       "git@github.com:owner/repo",
+			wantOwner: "owner",
+			wantRepo:  "repo",
+			wantOk:    true,
+		},
+		{
+			name:      "Invalid URL - not GitHub",
+			url:       "https://gitlab.com/owner/repo.git",
+			wantOwner: "",
+			wantRepo:  "",
+			wantOk:    false,
+		},
+		{
+			name:      "Invalid URL - no owner/repo",
+			url:       "git@github.com:invalid",
+			wantOwner: "",
+			wantRepo:  "",
+			wantOk:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			owner, repo, ok := ParseGitHubURL(tt.url)
+			if owner != tt.wantOwner {
+				t.Errorf("owner = %q, want %q", owner, tt.wantOwner)
+			}
+			if repo != tt.wantRepo {
+				t.Errorf("repo = %q, want %q", repo, tt.wantRepo)
+			}
+			if ok != tt.wantOk {
+				t.Errorf("ok = %v, want %v", ok, tt.wantOk)
+			}
+		})
+	}
+}
+
+func TestIsPermissionError(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{
+			name: "nil error",
+			err:  nil,
+			want: false,
+		},
+		{
+			name: "permission denied",
+			err:  fmt.Errorf("remote: Permission to owner/repo.git denied"),
+			want: true,
+		},
+		{
+			name: "GitHub SSH permission denied",
+			err:  fmt.Errorf("ERROR: Permission to steveyegge/gastown.git denied to michaellady"),
+			want: true,
+		},
+		{
+			name: "403 error",
+			err:  fmt.Errorf("The requested URL returned error: 403"),
+			want: true,
+		},
+		{
+			name: "authentication failed",
+			err:  fmt.Errorf("Authentication failed for ..."),
+			want: true,
+		},
+		{
+			name: "could not read username",
+			err:  fmt.Errorf("could not read Username for ..."),
+			want: true,
+		},
+		{
+			name: "write access denied",
+			err:  fmt.Errorf("remote: Write access to repository not granted"),
+			want: true,
+		},
+		{
+			name: "generic error",
+			err:  fmt.Errorf("some other error"),
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := IsPermissionError(tt.err)
+			if got != tt.want {
+				t.Errorf("IsPermissionError() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
