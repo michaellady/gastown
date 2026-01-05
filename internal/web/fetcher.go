@@ -317,6 +317,9 @@ func (f *LiveConvoyFetcher) getTrackedIssues(convoyID string) []trackedIssueInfo
 		issueIDs = append(issueIDs, issueID)
 	}
 
+	// Filter to top-level issues only (not depended on by other tracked issues)
+	issueIDs = f.filterToTopLevel(issueIDs)
+
 	// Batch fetch issue details
 	details := f.getIssueDetailsBatch(issueIDs)
 
@@ -343,6 +346,64 @@ func (f *LiveConvoyFetcher) getTrackedIssues(convoyID string) []trackedIssueInfo
 		}
 
 		result = append(result, info)
+	}
+
+	return result
+}
+
+// filterToTopLevel filters tracked issues to only show top-level ones.
+// An issue is top-level if no other tracked issue depends on it.
+// This deduplicates the display when a convoy tracks an entire dependency chain.
+func (f *LiveConvoyFetcher) filterToTopLevel(issueIDs []string) []string {
+	if len(issueIDs) <= 1 {
+		return issueIDs
+	}
+
+	// Query dependencies between tracked issues
+	// Find: which tracked issues are depended on by other tracked issues?
+	dbPath := filepath.Join(f.townBeads, "beads.db")
+
+	// Build IN clause for tracked IDs
+	quotedIDs := make([]string, len(issueIDs))
+	for i, id := range issueIDs {
+		quotedIDs[i] = "'" + strings.ReplaceAll(id, "'", "''") + "'"
+	}
+	inClause := strings.Join(quotedIDs, ",")
+
+	// Query: find all depends_on_id where both issue_id and depends_on_id are in our tracked set
+	// These are the "child" issues that should be filtered out
+	query := fmt.Sprintf(`SELECT DISTINCT depends_on_id FROM dependencies
+		WHERE issue_id IN (%s) AND depends_on_id IN (%s) AND type = 'blocks'`, inClause, inClause)
+
+	// #nosec G204 -- sqlite3 path is from trusted config, IDs are escaped
+	queryCmd := exec.Command("sqlite3", "-json", dbPath, query)
+	var stdout bytes.Buffer
+	queryCmd.Stdout = &stdout
+	if err := queryCmd.Run(); err != nil {
+		// On error, return all issues (don't filter)
+		return issueIDs
+	}
+
+	// Parse results - these are IDs that are dependencies of other tracked issues
+	var childIDs []struct {
+		DependsOnID string `json:"depends_on_id"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &childIDs); err != nil {
+		return issueIDs
+	}
+
+	// Build set of child IDs to filter out
+	childSet := make(map[string]bool, len(childIDs))
+	for _, c := range childIDs {
+		childSet[c.DependsOnID] = true
+	}
+
+	// Filter to only top-level issues
+	result := make([]string, 0, len(issueIDs))
+	for _, id := range issueIDs {
+		if !childSet[id] {
+			result = append(result, id)
+		}
 	}
 
 	return result
