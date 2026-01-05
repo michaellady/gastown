@@ -420,6 +420,20 @@ func updateAgentStateOnDone(cwd, townRoot, exitType, _ string) { // issueID unus
 		beadsPath = filepath.Join(townRoot, ctx.Rig)
 	}
 	bd := beads.New(beadsPath)
+
+	// BUG FIX (gt-vwjz6): Close hooked beads before clearing the hook.
+	// Previously, the agent's hook_bead slot was cleared but the hooked bead itself
+	// stayed status=hooked forever. Now we close the hooked bead before clearing.
+	if agentBead, err := bd.Show(agentBeadID); err == nil && agentBead.HookBead != "" {
+		hookedBeadID := agentBead.HookBead
+		// Only close if the hooked bead exists and is still in "hooked" status
+		if hookedBead, err := bd.Show(hookedBeadID); err == nil && hookedBead.Status == beads.StatusHooked {
+			if err := bd.Close(hookedBeadID); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: couldn't close hooked bead %s: %v\n", hookedBeadID, err)
+			}
+		}
+	}
+
 	emptyHook := ""
 	if err := bd.UpdateAgentState(agentBeadID, newState, &emptyHook); err != nil {
 		// Log warning instead of silent ignore - helps debug cross-beads issues
