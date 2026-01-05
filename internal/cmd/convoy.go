@@ -16,6 +16,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
+	convoystate "github.com/steveyegge/gastown/internal/convoy"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/tui/convoy"
 	"github.com/steveyegge/gastown/internal/workspace"
@@ -60,15 +61,17 @@ func looksLikeIssueID(s string) bool {
 
 // Convoy command flags
 var (
-	convoyMolecule     string
-	convoyNotify       string
-	convoyStatusJSON   bool
-	convoyListJSON     bool
-	convoyListStatus   string
-	convoyListAll      bool
-	convoyListTree     bool
-	convoyInteractive  bool
-	convoyStrandedJSON bool
+	convoyMolecule       string
+	convoyNotify         string
+	convoyStatusJSON     bool
+	convoyListJSON       bool
+	convoyListStatus     string
+	convoyListAll        bool
+	convoyListTree       bool
+	convoyInteractive    bool
+	convoyStrandedJSON   bool
+	convoyWorkStateJSON  bool
+	convoyWorkStateWatch bool
 )
 
 var convoyCmd = &cobra.Command{
@@ -199,6 +202,35 @@ Examples:
 	RunE: runConvoyStranded,
 }
 
+var convoyWorkStateCmd = &cobra.Command{
+	Use:   "work-state [convoy-id]",
+	Short: "Show convoy work states",
+	Long: `Show the work state of convoys.
+
+WORK STATES:
+  active     - Polecat is actively working (recent tool calls)
+  idle       - Polecat session exists but waiting at prompt (5+ min inactive)
+  stuck      - Polecat has stalled (30+ min no progress)
+  pr-pending - Work complete, PR created, awaiting merge
+  complete   - PR merged, convoy finished
+  waiting    - No worker assigned yet
+
+STATE SYMBOLS:
+  ▶ active    (green)
+  ◑ idle      (yellow)
+  ! stuck     (red)
+  ⏳ pr-pending (blue)
+  ✓ complete  (green)
+  ○ waiting   (dim)
+
+Examples:
+  gt convoy work-state            # Show all convoy work states
+  gt convoy work-state hq-cv-abc  # Show specific convoy's state
+  gt convoy work-state --json     # JSON output for automation`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runConvoyWorkState,
+}
+
 func init() {
 	// Create flags
 	convoyCreateCmd.Flags().StringVar(&convoyMolecule, "molecule", "", "Associated molecule ID")
@@ -220,6 +252,9 @@ func init() {
 	// Stranded flags
 	convoyStrandedCmd.Flags().BoolVar(&convoyStrandedJSON, "json", false, "Output as JSON")
 
+	// Work-state flags
+	convoyWorkStateCmd.Flags().BoolVar(&convoyWorkStateJSON, "json", false, "Output as JSON")
+
 	// Add subcommands
 	convoyCmd.AddCommand(convoyCreateCmd)
 	convoyCmd.AddCommand(convoyStatusCmd)
@@ -227,6 +262,7 @@ func init() {
 	convoyCmd.AddCommand(convoyAddCmd)
 	convoyCmd.AddCommand(convoyCheckCmd)
 	convoyCmd.AddCommand(convoyStrandedCmd)
+	convoyCmd.AddCommand(convoyWorkStateCmd)
 
 	rootCmd.AddCommand(convoyCmd)
 }
@@ -1357,6 +1393,255 @@ func formatWorkerAge(d time.Duration) string {
 		return fmt.Sprintf("%dh", int(d.Hours()))
 	}
 	return fmt.Sprintf("%dd", int(d.Hours()/24))
+}
+
+// convoyWorkStateInfo holds work state info for a convoy.
+type convoyWorkStateInfo struct {
+	ID           string                  `json:"id"`
+	Title        string                  `json:"title"`
+	WorkState    convoystate.WorkState   `json:"work_state"`
+	Progress     string                  `json:"progress"`
+	LastActivity string                  `json:"last_activity,omitempty"`
+	HasWorker    bool                    `json:"has_worker"`
+	StateInfo    *convoystate.StateInfo  `json:"state_info,omitempty"`
+}
+
+func runConvoyWorkState(cmd *cobra.Command, args []string) error {
+	townBeads, err := getTownBeadsDir()
+	if err != nil {
+		return err
+	}
+
+	// If specific convoy ID provided, show just that one
+	if len(args) > 0 {
+		return showSingleConvoyWorkState(townBeads, args[0])
+	}
+
+	// Show all open convoys' work states
+	return showAllConvoysWorkState(townBeads)
+}
+
+func showSingleConvoyWorkState(townBeads, convoyID string) error {
+	// Check if it's a numeric shortcut
+	if n, err := strconv.Atoi(convoyID); err == nil && n > 0 {
+		resolved, err := resolveConvoyNumber(townBeads, n)
+		if err != nil {
+			return err
+		}
+		convoyID = resolved
+	}
+
+	// Get convoy details
+	showArgs := []string{"show", convoyID, "--json"}
+	showCmd := exec.Command("bd", showArgs...)
+	showCmd.Dir = townBeads
+	var stdout bytes.Buffer
+	showCmd.Stdout = &stdout
+
+	if err := showCmd.Run(); err != nil {
+		return fmt.Errorf("convoy '%s' not found", convoyID)
+	}
+
+	var convoys []struct {
+		ID    string `json:"id"`
+		Title string `json:"title"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &convoys); err != nil || len(convoys) == 0 {
+		return fmt.Errorf("convoy '%s' not found", convoyID)
+	}
+
+	// Get tracked issues to calculate state
+	tracked := getTrackedIssues(townBeads, convoyID)
+
+	var completed, total int
+	var hasWorker bool
+	var mostRecentActivity time.Time
+
+	for _, t := range tracked {
+		total++
+		if t.Status == "closed" {
+			completed++
+		}
+		if t.Assignee != "" {
+			hasWorker = true
+		}
+		// Parse last activity from assignee if available
+		if t.Worker != "" && t.WorkerAge != "" {
+			// Worker age gives us relative time - for now just mark as having activity
+			hasWorker = true
+		}
+	}
+
+	// Calculate work state
+	// TODO: Add PR detection
+	hasPR := false
+	prMerged := false
+	workState := convoystate.CalculateState(hasWorker, mostRecentActivity, completed, total, hasPR, prMerged)
+
+	info := convoyWorkStateInfo{
+		ID:        convoyID,
+		Title:     convoys[0].Title,
+		WorkState: workState,
+		Progress:  fmt.Sprintf("%d/%d", completed, total),
+		HasWorker: hasWorker,
+	}
+
+	if convoyWorkStateJSON {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(info)
+	}
+
+	// Human-readable output
+	fmt.Printf("🚚 %s: %s\n\n", style.Bold.Render(convoyID), convoys[0].Title)
+	fmt.Printf("  Work State: %s %s\n", workState.Symbol(), workState)
+	fmt.Printf("  Progress:   %d/%d completed\n", completed, total)
+	if hasWorker {
+		fmt.Printf("  Worker:     assigned\n")
+	} else {
+		fmt.Printf("  Worker:     %s\n", style.Dim.Render("none"))
+	}
+
+	// State description
+	fmt.Println()
+	switch workState {
+	case convoystate.WorkStateActive:
+		fmt.Println("  " + style.Success.Render("▶") + " Polecat is actively working")
+	case convoystate.WorkStateIdle:
+		fmt.Println("  " + style.Warning.Render("◑") + " Polecat session waiting (5+ min inactive)")
+	case convoystate.WorkStateStuck:
+		fmt.Println("  " + style.Error.Render("!") + " Work has stalled (30+ min no progress)")
+	case convoystate.WorkStatePRPending:
+		fmt.Println("  " + style.Info.Render("⏳") + " PR created, awaiting merge")
+	case convoystate.WorkStateComplete:
+		fmt.Println("  " + style.Success.Render("✓") + " Work complete, PR merged")
+	case convoystate.WorkStateWaiting:
+		fmt.Println("  " + style.Dim.Render("○") + " Waiting for worker assignment")
+	}
+
+	return nil
+}
+
+func showAllConvoysWorkState(townBeads string) error {
+	// List all open convoys
+	listArgs := []string{"list", "--type=convoy", "--status=open", "--json"}
+	listCmd := exec.Command("bd", listArgs...)
+	listCmd.Dir = townBeads
+	var stdout bytes.Buffer
+	listCmd.Stdout = &stdout
+
+	if err := listCmd.Run(); err != nil {
+		return fmt.Errorf("listing convoys: %w", err)
+	}
+
+	var convoys []struct {
+		ID    string `json:"id"`
+		Title string `json:"title"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &convoys); err != nil {
+		return fmt.Errorf("parsing convoy list: %w", err)
+	}
+
+	if len(convoys) == 0 {
+		fmt.Println("No active convoys.")
+		return nil
+	}
+
+	var results []convoyWorkStateInfo
+
+	for _, c := range convoys {
+		// Get tracked issues
+		tracked := getTrackedIssues(townBeads, c.ID)
+
+		var completed, total int
+		var hasWorker bool
+		var mostRecentActivity time.Time
+
+		for _, t := range tracked {
+			total++
+			if t.Status == "closed" {
+				completed++
+			}
+			if t.Assignee != "" {
+				hasWorker = true
+			}
+		}
+
+		// Calculate work state
+		hasPR := false
+		prMerged := false
+		workState := convoystate.CalculateState(hasWorker, mostRecentActivity, completed, total, hasPR, prMerged)
+
+		results = append(results, convoyWorkStateInfo{
+			ID:        c.ID,
+			Title:     c.Title,
+			WorkState: workState,
+			Progress:  fmt.Sprintf("%d/%d", completed, total),
+			HasWorker: hasWorker,
+		})
+	}
+
+	if convoyWorkStateJSON {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(results)
+	}
+
+	// Human-readable output
+	fmt.Printf("%s\n\n", style.Bold.Render("Convoy Work States"))
+
+	// Group by state
+	stateOrder := []convoystate.WorkState{
+		convoystate.WorkStateStuck,
+		convoystate.WorkStateWaiting,
+		convoystate.WorkStateIdle,
+		convoystate.WorkStateActive,
+		convoystate.WorkStatePRPending,
+		convoystate.WorkStateComplete,
+	}
+
+	stateGroups := make(map[convoystate.WorkState][]convoyWorkStateInfo)
+	for _, r := range results {
+		stateGroups[r.WorkState] = append(stateGroups[r.WorkState], r)
+	}
+
+	for _, state := range stateOrder {
+		group := stateGroups[state]
+		if len(group) == 0 {
+			continue
+		}
+
+		// Print state header with appropriate color
+		var stateStr string
+		switch state {
+		case convoystate.WorkStateStuck:
+			stateStr = style.Error.Render(string(state))
+		case convoystate.WorkStateWaiting:
+			stateStr = style.Dim.Render(string(state))
+		case convoystate.WorkStateIdle:
+			stateStr = style.Warning.Render(string(state))
+		case convoystate.WorkStateActive:
+			stateStr = style.Success.Render(string(state))
+		case convoystate.WorkStatePRPending:
+			stateStr = style.Info.Render(string(state))
+		case convoystate.WorkStateComplete:
+			stateStr = style.Success.Render(string(state))
+		default:
+			stateStr = string(state)
+		}
+
+		fmt.Printf("%s %s (%d)\n", state.Symbol(), stateStr, len(group))
+		for _, r := range group {
+			title := r.Title
+			if len(title) > 30 {
+				title = title[:27] + "..."
+			}
+			fmt.Printf("  🚚 %s: %s  [%s]\n", r.ID, title, r.Progress)
+		}
+		fmt.Println()
+	}
+
+	return nil
 }
 
 // runConvoyTUI launches the interactive convoy TUI.

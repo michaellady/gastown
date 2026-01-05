@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/steveyegge/gastown/internal/convoy"
 )
 
 // convoyIDPattern validates convoy IDs to prevent SQL injection
@@ -24,13 +25,17 @@ const convoySubprocessTimeout = 5 * time.Second
 
 // Convoy represents a convoy's status for the dashboard
 type Convoy struct {
-	ID        string    `json:"id"`
-	Title     string    `json:"title"`
-	Status    string    `json:"status"`
-	Completed int       `json:"completed"`
-	Total     int       `json:"total"`
-	CreatedAt time.Time `json:"created_at"`
-	ClosedAt  time.Time `json:"closed_at,omitempty"`
+	ID           string           `json:"id"`
+	Title        string           `json:"title"`
+	Status       string           `json:"status"`
+	WorkState    convoy.WorkState `json:"work_state"`
+	Completed    int              `json:"completed"`
+	Total        int              `json:"total"`
+	CreatedAt    time.Time        `json:"created_at"`
+	ClosedAt     time.Time        `json:"closed_at,omitempty"`
+	LastActivity time.Time        `json:"last_activity,omitempty"`
+	HasWorker    bool             `json:"has_worker"`
+	PRURL        string           `json:"pr_url,omitempty"`
 }
 
 // ConvoyState holds all convoy data for the panel
@@ -118,9 +123,9 @@ type convoyListItem struct {
 	ClosedAt  string `json:"closed_at,omitempty"`
 }
 
-// enrichConvoy adds tracked issue counts to a convoy
+// enrichConvoy adds tracked issue counts and work state to a convoy
 func enrichConvoy(beadsDir string, item convoyListItem) Convoy {
-	convoy := Convoy{
+	c := Convoy{
 		ID:     item.ID,
 		Title:  item.Title,
 		Status: item.Status,
@@ -128,31 +133,48 @@ func enrichConvoy(beadsDir string, item convoyListItem) Convoy {
 
 	// Parse timestamps
 	if t, err := time.Parse(time.RFC3339, item.CreatedAt); err == nil {
-		convoy.CreatedAt = t
+		c.CreatedAt = t
 	} else if t, err := time.Parse("2006-01-02 15:04", item.CreatedAt); err == nil {
-		convoy.CreatedAt = t
+		c.CreatedAt = t
 	}
 	if t, err := time.Parse(time.RFC3339, item.ClosedAt); err == nil {
-		convoy.ClosedAt = t
+		c.ClosedAt = t
 	} else if t, err := time.Parse("2006-01-02 15:04", item.ClosedAt); err == nil {
-		convoy.ClosedAt = t
+		c.ClosedAt = t
 	}
 
 	// Get tracked issues and their status
 	tracked := getTrackedIssueStatus(beadsDir, item.ID)
-	convoy.Total = len(tracked)
+	c.Total = len(tracked)
+
+	var mostRecentActivity time.Time
 	for _, t := range tracked {
 		if t.Status == "closed" {
-			convoy.Completed++
+			c.Completed++
+		}
+		if t.Assignee != "" {
+			c.HasWorker = true
+		}
+		if t.LastActivity.After(mostRecentActivity) {
+			mostRecentActivity = t.LastActivity
 		}
 	}
+	c.LastActivity = mostRecentActivity
 
-	return convoy
+	// Calculate work state
+	// TODO: Add PR detection when we have that capability
+	hasPR := false
+	prMerged := false
+	c.WorkState = convoy.CalculateState(c.HasWorker, c.LastActivity, c.Completed, c.Total, hasPR, prMerged)
+
+	return c
 }
 
 type trackedStatus struct {
-	ID     string
-	Status string
+	ID           string
+	Status       string
+	Assignee     string
+	LastActivity time.Time
 }
 
 // getTrackedIssueStatus queries tracked issues and their status
@@ -197,12 +219,61 @@ func getTrackedIssueStatus(beadsDir, convoyID string) []trackedStatus {
 			}
 		}
 
-		// Get issue status
-		status := getIssueStatus(issueID)
-		tracked = append(tracked, trackedStatus{ID: issueID, Status: status})
+		// Get issue info including status and assignee
+		info := getIssueInfo(issueID)
+		tracked = append(tracked, trackedStatus{
+			ID:           issueID,
+			Status:       info.Status,
+			Assignee:     info.Assignee,
+			LastActivity: info.LastActivity,
+		})
 	}
 
 	return tracked
+}
+
+// issueInfo holds basic issue info for state calculation.
+type issueInfo struct {
+	Status       string
+	Assignee     string
+	LastActivity time.Time
+}
+
+// getIssueInfo fetches status and assignee of an issue.
+func getIssueInfo(issueID string) issueInfo {
+	ctx, cancel := context.WithTimeout(context.Background(), convoySubprocessTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "bd", "show", issueID, "--json")
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+
+	if err := cmd.Run(); err != nil {
+		return issueInfo{Status: "unknown"}
+	}
+
+	var issues []struct {
+		Status       string `json:"status"`
+		Assignee     string `json:"assignee"`
+		LastActivity string `json:"last_activity"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &issues); err != nil || len(issues) == 0 {
+		return issueInfo{Status: "unknown"}
+	}
+
+	info := issueInfo{
+		Status:   issues[0].Status,
+		Assignee: issues[0].Assignee,
+	}
+
+	// Parse last_activity timestamp
+	if issues[0].LastActivity != "" {
+		if t, err := time.Parse(time.RFC3339, issues[0].LastActivity); err == nil {
+			info.LastActivity = t
+		}
+	}
+
+	return info
 }
 
 // getIssueStatus fetches just the status of an issue
@@ -258,6 +329,23 @@ var (
 
 	ConvoyAgeStyle = lipgloss.NewStyle().
 			Foreground(colorDim)
+
+	// Work state styles
+	ConvoyStateActiveStyle = lipgloss.NewStyle().
+				Foreground(colorSuccess)
+
+	ConvoyStateIdleStyle = lipgloss.NewStyle().
+				Foreground(colorWarning)
+
+	ConvoyStateStuckStyle = lipgloss.NewStyle().
+				Foreground(colorError).
+				Bold(true)
+
+	ConvoyStatePRPendingStyle = lipgloss.NewStyle().
+					Foreground(colorPrimary)
+
+	ConvoyStateWaitingStyle = lipgloss.NewStyle().
+				Foreground(colorDim)
 )
 
 // renderConvoyPanel renders the convoy status panel
@@ -307,7 +395,7 @@ func (m *Model) renderConvoys() string {
 
 // renderConvoyLine renders a single convoy status line
 func renderConvoyLine(c Convoy, landed bool) string {
-	// Format: "  hq-xyz  Title       2/4 ●●○○" or "  hq-xyz  Title       ✓ 2h ago"
+	// Format: "  ▶ hq-xyz  Title       2/4 ●●○○" or "  ✓ hq-xyz  Title       ✓ 2h ago"
 	id := ConvoyIDStyle.Render(c.ID)
 
 	// Truncate title if too long
@@ -317,17 +405,41 @@ func renderConvoyLine(c Convoy, landed bool) string {
 	}
 	title = ConvoyNameStyle.Render(title)
 
+	// Render work state symbol with appropriate color
+	stateSymbol := renderWorkStateSymbol(c.WorkState)
+
 	if landed {
 		// Show checkmark and time since landing
 		age := formatAge(time.Since(c.ClosedAt))
 		status := ConvoyLandedStyle.Render("✓") + " " + ConvoyAgeStyle.Render(age+" ago")
-		return fmt.Sprintf("  %s  %-20s  %s", id, title, status)
+		return fmt.Sprintf("  %s %s  %-20s  %s", stateSymbol, id, title, status)
 	}
 
-	// Show progress bar
+	// Show progress bar and state
 	progress := renderProgressBar(c.Completed, c.Total)
 	count := ConvoyProgressStyle.Render(fmt.Sprintf("%d/%d", c.Completed, c.Total))
-	return fmt.Sprintf("  %s  %-20s  %s %s", id, title, count, progress)
+	return fmt.Sprintf("  %s %s  %-20s  %s %s", stateSymbol, id, title, count, progress)
+}
+
+// renderWorkStateSymbol returns the work state symbol with appropriate styling.
+func renderWorkStateSymbol(state convoy.WorkState) string {
+	symbol := state.Symbol()
+	switch state {
+	case convoy.WorkStateActive:
+		return ConvoyStateActiveStyle.Render(symbol)
+	case convoy.WorkStateIdle:
+		return ConvoyStateIdleStyle.Render(symbol)
+	case convoy.WorkStateStuck:
+		return ConvoyStateStuckStyle.Render(symbol)
+	case convoy.WorkStatePRPending:
+		return ConvoyStatePRPendingStyle.Render(symbol)
+	case convoy.WorkStateComplete:
+		return ConvoyLandedStyle.Render(symbol)
+	case convoy.WorkStateWaiting:
+		return ConvoyStateWaitingStyle.Render(symbol)
+	default:
+		return ConvoyStateWaitingStyle.Render("?")
+	}
 }
 
 // renderProgressBar creates a simple progress bar: ●●○○
