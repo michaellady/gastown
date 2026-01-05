@@ -1,13 +1,11 @@
 package refinery
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -489,56 +487,7 @@ func (m *Manager) runTests(testCmd string) error {
 		return nil
 	}
 
-	cmd := exec.Command(parts[0], parts[1:]...) //nolint:gosec // G204: testCmd is from trusted rig config
-	cmd.Dir = m.workDir
-
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("%s: %s", err, strings.TrimSpace(stderr.String()))
-	}
-
-	return nil
-}
-
-// gitRun executes a git command.
-func (m *Manager) gitRun(args ...string) error {
-	cmd := exec.Command("git", args...)
-	cmd.Dir = m.workDir
-
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		errMsg := strings.TrimSpace(stderr.String())
-		if errMsg != "" {
-			return fmt.Errorf("%s", errMsg)
-		}
-		return err
-	}
-
-	return nil
-}
-
-// gitOutput executes a git command and returns stdout.
-func (m *Manager) gitOutput(args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
-	cmd.Dir = m.workDir
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		errMsg := strings.TrimSpace(stderr.String())
-		if errMsg != "" {
-			return "", fmt.Errorf("%s", errMsg)
-		}
-		return "", err
-	}
-
-	return strings.TrimSpace(stdout.String()), nil
+	return util.ExecRun(m.workDir, parts[0], parts[1:]...)
 }
 
 // getMergeConfig loads the merge configuration from disk.
@@ -579,7 +528,7 @@ func (m *Manager) pushWithRetry(targetBranch string, config MergeConfig) error {
 			delay *= 2 // Exponential backoff
 		}
 
-		err := m.gitRun("push", "origin", targetBranch)
+		err := util.ExecRun(m.workDir, "git", "push", "origin", targetBranch)
 		if err == nil {
 			return nil // Success
 		}

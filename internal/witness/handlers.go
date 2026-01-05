@@ -1,10 +1,8 @@
 package witness
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -14,6 +12,7 @@ import (
 	"github.com/steveyegge/gastown/internal/mail"
 	"github.com/steveyegge/gastown/internal/rig"
 	"github.com/steveyegge/gastown/internal/tmux"
+	"github.com/steveyegge/gastown/internal/util"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
 
@@ -337,28 +336,17 @@ func createCleanupWisp(workDir, polecatName, issueID, branch string) (string, er
 
 	labels := strings.Join(CleanupWispLabels(polecatName, "pending"), ",")
 
-	cmd := exec.Command("bd", "create", //nolint:gosec // G204: args are constructed internally
+	output, err := util.ExecWithOutput(workDir, "bd", "create",
 		"--wisp",
 		"--title", title,
 		"--description", description,
 		"--labels", labels,
 	)
-	cmd.Dir = workDir
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		errMsg := strings.TrimSpace(stderr.String())
-		if errMsg != "" {
-			return "", fmt.Errorf("%s", errMsg)
-		}
+	if err != nil {
 		return "", err
 	}
 
 	// Extract wisp ID from output (bd create outputs "Created: <id>")
-	output := strings.TrimSpace(stdout.String())
 	if strings.HasPrefix(output, "Created:") {
 		return strings.TrimSpace(strings.TrimPrefix(output, "Created:")), nil
 	}
@@ -382,27 +370,16 @@ func createSwarmWisp(workDir string, payload *SwarmStartPayload) (string, error)
 
 	labels := strings.Join(SwarmWispLabels(payload.SwarmID, payload.Total, 0, payload.StartedAt), ",")
 
-	cmd := exec.Command("bd", "create", //nolint:gosec // G204: args are constructed internally
+	output, err := util.ExecWithOutput(workDir, "bd", "create",
 		"--wisp",
 		"--title", title,
 		"--description", description,
 		"--labels", labels,
 	)
-	cmd.Dir = workDir
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		errMsg := strings.TrimSpace(stderr.String())
-		if errMsg != "" {
-			return "", fmt.Errorf("%s", errMsg)
-		}
+	if err != nil {
 		return "", err
 	}
 
-	output := strings.TrimSpace(stdout.String())
 	if strings.HasPrefix(output, "Created:") {
 		return strings.TrimSpace(strings.TrimPrefix(output, "Created:")), nil
 	}
@@ -412,32 +389,21 @@ func createSwarmWisp(workDir string, payload *SwarmStartPayload) (string, error)
 
 // findCleanupWisp finds an existing cleanup wisp for a polecat.
 func findCleanupWisp(workDir, polecatName string) (string, error) {
-	cmd := exec.Command("bd", "list", //nolint:gosec // G204: bd is a trusted internal tool
+	output, err := util.ExecWithOutput(workDir, "bd", "list",
 		"--wisp",
 		"--labels", fmt.Sprintf("polecat:%s,state:merge-requested", polecatName),
 		"--status", "open",
 		"--json",
 	)
-	cmd.Dir = workDir
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
+	if err != nil {
 		// Empty result is fine
-		if strings.Contains(stderr.String(), "no issues found") {
+		if strings.Contains(err.Error(), "no issues found") {
 			return "", nil
-		}
-		errMsg := strings.TrimSpace(stderr.String())
-		if errMsg != "" {
-			return "", fmt.Errorf("%s", errMsg)
 		}
 		return "", err
 	}
 
 	// Parse JSON to get the wisp ID
-	output := strings.TrimSpace(stdout.String())
 	if output == "" || output == "[]" || output == "null" {
 		return "", nil
 	}
@@ -477,26 +443,19 @@ func getCleanupStatus(workDir, rigName, polecatName string) string {
 	prefix := beads.GetPrefixForRig(townRoot, rigName)
 	agentBeadID := beads.PolecatBeadIDWithPrefix(prefix, rigName, polecatName)
 
-	cmd := exec.Command("bd", "show", agentBeadID, "--json") //nolint:gosec // G204: agentBeadID is validated internally
-	cmd.Dir = workDir
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
+	output, err := util.ExecWithOutput(workDir, "bd", "show", agentBeadID, "--json")
+	if err != nil {
 		// Agent bead doesn't exist or bd failed - return empty (unknown status)
 		return ""
 	}
 
-	output := stdout.Bytes()
-	if len(output) == 0 {
+	if output == "" {
 		return ""
 	}
 
 	// Parse the JSON response
 	var resp agentBeadResponse
-	if err := json.Unmarshal(output, &resp); err != nil {
+	if err := json.Unmarshal([]byte(output), &resp); err != nil {
 		return ""
 	}
 
@@ -599,18 +558,12 @@ DO NOT nuke without --force after recovery.`,
 // UpdateCleanupWispState updates a cleanup wisp's state label.
 func UpdateCleanupWispState(workDir, wispID, newState string) error {
 	// Get current labels to preserve other labels
-	cmd := exec.Command("bd", "show", wispID, "--json")
-	cmd.Dir = workDir
-
-	var stdout bytes.Buffer
-	cmd.Stdout = &stdout
-
-	if err := cmd.Run(); err != nil {
+	output, err := util.ExecWithOutput(workDir, "bd", "show", wispID, "--json")
+	if err != nil {
 		return fmt.Errorf("getting wisp: %w", err)
 	}
 
 	// Extract polecat name from existing labels for the update
-	output := stdout.String()
 	var polecatName string
 	if idx := strings.Index(output, `polecat:`); idx >= 0 {
 		rest := output[idx+8:]
@@ -626,21 +579,7 @@ func UpdateCleanupWispState(workDir, wispID, newState string) error {
 	// Update with new state
 	newLabels := strings.Join(CleanupWispLabels(polecatName, newState), ",")
 
-	updateCmd := exec.Command("bd", "update", wispID, "--labels", newLabels) //nolint:gosec // G204: args are constructed internally
-	updateCmd.Dir = workDir
-
-	var stderr bytes.Buffer
-	updateCmd.Stderr = &stderr
-
-	if err := updateCmd.Run(); err != nil {
-		errMsg := strings.TrimSpace(stderr.String())
-		if errMsg != "" {
-			return fmt.Errorf("%s", errMsg)
-		}
-		return err
-	}
-
-	return nil
+	return util.ExecRun(workDir, "bd", "update", wispID, "--labels", newLabels)
 }
 
 // NukePolecat executes the actual nuke operation for a polecat.
@@ -671,17 +610,7 @@ func NukePolecat(workDir, rigName, polecatName string) error {
 	// Now run gt polecat nuke to clean up worktree, branch, and beads
 	address := fmt.Sprintf("%s/%s", rigName, polecatName)
 
-	cmd := exec.Command("gt", "polecat", "nuke", address) //nolint:gosec // G204: address is constructed from validated internal data
-	cmd.Dir = workDir
-
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		errMsg := strings.TrimSpace(stderr.String())
-		if errMsg != "" {
-			return fmt.Errorf("nuke failed: %s", errMsg)
-		}
+	if err := util.ExecRun(workDir, "gt", "polecat", "nuke", address); err != nil {
 		return fmt.Errorf("nuke failed: %w", err)
 	}
 
