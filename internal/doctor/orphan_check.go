@@ -316,7 +316,7 @@ func (c *OrphanProcessCheck) Run(ctx *CheckContext) *CheckResult {
 	}
 }
 
-// Fix kills orphaned processes, with safeguards for crew sessions.
+// Fix kills orphaned processes, with safeguards for crew sessions and self-kill prevention.
 func (c *OrphanProcessCheck) Fix(ctx *CheckContext) error {
 	if len(c.orphanPIDs) == 0 {
 		return nil
@@ -327,8 +327,18 @@ func (c *OrphanProcessCheck) Fix(ctx *CheckContext) error {
 	// we should not kill it (the detection might be wrong).
 	crewPanePIDs := c.getCrewSessionPanePIDs()
 
+	// SAFEGUARD: Get ancestor PIDs of the current process to avoid self-kill.
+	// When gt doctor --fix is run from Claude Code (not in tmux), Claude Code
+	// appears orphaned but killing it would terminate this command.
+	ancestorPIDs := c.getCurrentProcessAncestors()
+
 	var lastErr error
 	for _, pid := range c.orphanPIDs {
+		// Never kill our own ancestors (would terminate this process)
+		if ancestorPIDs[pid] {
+			continue
+		}
+
 		// Check if this process has a crew session ancestor
 		if c.hasCrewAncestor(pid, crewPanePIDs) {
 			// Skip - this process might belong to a crew session
@@ -349,6 +359,37 @@ func (c *OrphanProcessCheck) Fix(ctx *CheckContext) error {
 	}
 
 	return lastErr
+}
+
+// getCurrentProcessAncestors returns PIDs of all ancestors of the current process.
+// This prevents gt doctor --fix from killing processes in its own process tree,
+// which would cause it to terminate unexpectedly.
+func (c *OrphanProcessCheck) getCurrentProcessAncestors() map[int]bool {
+	ancestors := make(map[int]bool)
+	currentPID := os.Getpid()
+	ancestors[currentPID] = true
+
+	// Walk up the process tree
+	for currentPID > 1 {
+		out, err := exec.Command("ps", "-p", fmt.Sprintf("%d", currentPID), "-o", "ppid=").Output()
+		if err != nil {
+			break
+		}
+
+		var ppid int
+		if _, err := fmt.Sscanf(strings.TrimSpace(string(out)), "%d", &ppid); err != nil {
+			break
+		}
+
+		if ppid <= 1 {
+			break
+		}
+
+		ancestors[ppid] = true
+		currentPID = ppid
+	}
+
+	return ancestors
 }
 
 // getCrewSessionPanePIDs returns pane PIDs for all crew sessions.
