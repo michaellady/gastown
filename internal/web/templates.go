@@ -52,6 +52,7 @@ type ConvoyRow struct {
 	TrackedIssues []TrackedIssue
 	PRNumber      int    // Associated PR number (0 if none)
 	PRURL         string // Associated PR URL (empty if none)
+	StateHistory  []StateHistoryEvent
 }
 
 // TrackedIssue represents an issue tracked by a convoy.
@@ -69,6 +70,15 @@ type DependencyNode struct {
 	Title    string
 	Status   string
 	Children []DependencyNode
+}
+
+// StateHistoryEvent represents a state change event in convoy history.
+type StateHistoryEvent struct {
+	EventType     string // "created", "status_changed", "issue_closed", "issue_added"
+	Timestamp     string // Formatted timestamp
+	TimestampUnix int64  // Unix timestamp for sorting
+	Actor         string // Who made the change
+	Details       string // Human-readable description
 }
 
 // LoadTemplates loads and parses all HTML templates.

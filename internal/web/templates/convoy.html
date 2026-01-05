@@ -429,6 +429,92 @@
             color: var(--text-secondary);
             font-style: italic;
         }
+
+        /* State history timeline styles */
+        .state-history {
+            margin-top: 16px;
+            padding-top: 16px;
+            border-top: 1px solid var(--border);
+        }
+
+        .history-header {
+            color: var(--text-secondary);
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 8px;
+        }
+
+        .timeline {
+            position: relative;
+            padding-left: 20px;
+        }
+
+        .timeline::before {
+            content: '';
+            position: absolute;
+            left: 4px;
+            top: 4px;
+            bottom: 4px;
+            width: 2px;
+            background: var(--border);
+        }
+
+        .timeline-event {
+            position: relative;
+            padding: 4px 0 12px 0;
+            font-size: 0.875rem;
+        }
+
+        .timeline-event::before {
+            content: '';
+            position: absolute;
+            left: -20px;
+            top: 6px;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--border);
+            border: 2px solid var(--bg-card);
+        }
+
+        .timeline-event.event-created::before {
+            background: var(--green);
+        }
+
+        .timeline-event.event-closed::before {
+            background: var(--green);
+        }
+
+        .timeline-event.event-dependency_added::before {
+            background: var(--yellow);
+        }
+
+        .timeline-event.event-status_changed::before {
+            background: var(--yellow);
+        }
+
+        .timeline-time {
+            color: var(--text-secondary);
+            font-size: 0.75rem;
+            margin-right: 8px;
+        }
+
+        .timeline-details {
+            color: var(--text-primary);
+        }
+
+        .timeline-actor {
+            color: var(--text-secondary);
+            font-size: 0.75rem;
+            margin-left: 8px;
+        }
+
+        .no-history {
+            color: var(--text-secondary);
+            font-style: italic;
+            font-size: 0.875rem;
+        }
     </style>
 </head>
 <body>
@@ -505,6 +591,20 @@
                             <span class="no-deps">No tracked issues</span>
                             {{end}}
                         </div>
+                        {{if $convoy.StateHistory}}
+                        <div class="state-history">
+                            <div class="history-header">State History</div>
+                            <div class="timeline">
+                                {{range $convoy.StateHistory}}
+                                <div class="timeline-event event-{{.EventType}}">
+                                    <span class="timeline-time">{{.Timestamp}}</span>
+                                    <span class="timeline-details">{{.Details}}</span>
+                                    {{if .Actor}}<span class="timeline-actor">by {{.Actor}}</span>{{end}}
+                                </div>
+                                {{end}}
+                            </div>
+                        </div>
+                        {{end}}
                     </td>
                 </tr>
                 {{end}}

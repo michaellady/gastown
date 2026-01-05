@@ -138,6 +138,9 @@ func (f *LiveConvoyFetcher) FetchConvoys() ([]ConvoyRow, error) {
 		// Detect associated PR from tracked issues
 		row.PRNumber, row.PRURL = f.detectPRForConvoy(tracked)
 
+		// Fetch state history for the convoy
+		row.StateHistory = f.getConvoyStateHistory(c.ID)
+
 		rows = append(rows, row)
 	}
 
@@ -1074,6 +1077,83 @@ func rebuildTreeWithChildren(nodeMap map[string]*DependencyNode, nodes []depTree
 	var result []DependencyNode
 	for _, childID := range childrenMap[rootID] {
 		result = append(result, buildNode(childID))
+	}
+
+	return result
+}
+
+// getConvoyStateHistory fetches the state change history for a convoy from the events table.
+func (f *LiveConvoyFetcher) getConvoyStateHistory(convoyID string) []StateHistoryEvent {
+	dbPath := filepath.Join(f.townBeads, "beads.db")
+
+	// Query events for this convoy
+	safeConvoyID := strings.ReplaceAll(convoyID, "'", "''")
+	// #nosec G204 -- sqlite3 path is from trusted config, convoyID is escaped
+	query := fmt.Sprintf(`
+		SELECT event_type, actor, old_value, new_value, comment, created_at
+		FROM events
+		WHERE issue_id = '%s'
+		ORDER BY created_at ASC
+	`, safeConvoyID)
+
+	queryCmd := exec.Command("sqlite3", "-json", dbPath, query)
+	var stdout bytes.Buffer
+	queryCmd.Stdout = &stdout
+	if err := queryCmd.Run(); err != nil {
+		return nil
+	}
+
+	var events []struct {
+		EventType string `json:"event_type"`
+		Actor     string `json:"actor"`
+		OldValue  string `json:"old_value"`
+		NewValue  string `json:"new_value"`
+		Comment   string `json:"comment"`
+		CreatedAt string `json:"created_at"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &events); err != nil {
+		return nil
+	}
+
+	result := make([]StateHistoryEvent, 0, len(events))
+	for _, e := range events {
+		event := StateHistoryEvent{
+			EventType: e.EventType,
+			Actor:     e.Actor,
+		}
+
+		// Parse timestamp
+		if t, err := time.Parse("2006-01-02 15:04:05", e.CreatedAt); err == nil {
+			event.Timestamp = t.Format("Jan 2 15:04")
+			event.TimestampUnix = t.Unix()
+		} else if t, err := time.Parse(time.RFC3339, e.CreatedAt); err == nil {
+			event.Timestamp = t.Format("Jan 2 15:04")
+			event.TimestampUnix = t.Unix()
+		} else {
+			event.Timestamp = e.CreatedAt
+		}
+
+		// Generate human-readable details based on event type
+		switch e.EventType {
+		case "created":
+			event.Details = "Convoy created"
+		case "status_changed":
+			event.Details = fmt.Sprintf("Status changed")
+		case "dependency_added":
+			event.Details = "Issue added to tracking"
+		case "closed":
+			if e.Comment != "" {
+				event.Details = fmt.Sprintf("Closed: %s", e.Comment)
+			} else {
+				event.Details = "Convoy closed"
+			}
+		case "updated":
+			event.Details = "Convoy updated"
+		default:
+			event.Details = e.EventType
+		}
+
+		result = append(result, event)
 	}
 
 	return result
