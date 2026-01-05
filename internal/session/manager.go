@@ -17,6 +17,15 @@ import (
 	"github.com/steveyegge/gastown/internal/tmux"
 )
 
+// debugSession logs non-fatal errors during session startup when GT_DEBUG_SESSION=1.
+// These errors are intentionally suppressed because they don't prevent session operation,
+// but logging them helps diagnose issues when needed.
+func debugSession(context string, err error) {
+	if os.Getenv("GT_DEBUG_SESSION") != "" && err != nil {
+		fmt.Fprintf(os.Stderr, "[session-debug] %s: %v\n", context, err)
+	}
+}
+
 // Common errors
 var (
 	ErrSessionRunning  = errors.New("session already running")
@@ -139,12 +148,12 @@ func (m *Manager) Start(polecat string, opts StartOptions) error {
 	}
 
 	// Set environment (non-fatal: session works without these)
-	_ = m.tmux.SetEnvironment(sessionID, "GT_RIG", m.rig.Name)
-	_ = m.tmux.SetEnvironment(sessionID, "GT_POLECAT", polecat)
+	debugSession("SetEnvironment GT_RIG", m.tmux.SetEnvironment(sessionID, "GT_RIG", m.rig.Name))
+	debugSession("SetEnvironment GT_POLECAT", m.tmux.SetEnvironment(sessionID, "GT_POLECAT", polecat))
 
 	// Set CLAUDE_CONFIG_DIR for account selection (non-fatal)
 	if opts.ClaudeConfigDir != "" {
-		_ = m.tmux.SetEnvironment(sessionID, "CLAUDE_CONFIG_DIR", opts.ClaudeConfigDir)
+		debugSession("SetEnvironment CLAUDE_CONFIG_DIR", m.tmux.SetEnvironment(sessionID, "CLAUDE_CONFIG_DIR", opts.ClaudeConfigDir))
 	}
 
 	// CRITICAL: Set beads environment for worktree polecats (non-fatal: session works without)
@@ -154,9 +163,9 @@ func (m *Manager) Start(polecat string, opts StartOptions) error {
 	// Using town-level beads ensures gt prime and bd commands can find hooked work.
 	townRoot := filepath.Dir(m.rig.Path) // Town root is parent of rig directory
 	beadsDir := filepath.Join(townRoot, ".beads")
-	_ = m.tmux.SetEnvironment(sessionID, "BEADS_DIR", beadsDir)
-	_ = m.tmux.SetEnvironment(sessionID, "BEADS_NO_DAEMON", "1")
-	_ = m.tmux.SetEnvironment(sessionID, "BEADS_AGENT_NAME", fmt.Sprintf("%s/%s", m.rig.Name, polecat))
+	debugSession("SetEnvironment BEADS_DIR", m.tmux.SetEnvironment(sessionID, "BEADS_DIR", beadsDir))
+	debugSession("SetEnvironment BEADS_NO_DAEMON", m.tmux.SetEnvironment(sessionID, "BEADS_NO_DAEMON", "1"))
+	debugSession("SetEnvironment BEADS_AGENT_NAME", m.tmux.SetEnvironment(sessionID, "BEADS_AGENT_NAME", fmt.Sprintf("%s/%s", m.rig.Name, polecat)))
 
 	// Hook the issue to the polecat if provided via --issue flag
 	if opts.Issue != "" {
@@ -169,11 +178,11 @@ func (m *Manager) Start(polecat string, opts StartOptions) error {
 
 	// Apply theme (non-fatal: theming failure doesn't affect operation)
 	theme := tmux.AssignTheme(m.rig.Name)
-	_ = m.tmux.ConfigureGasTownSession(sessionID, theme, m.rig.Name, polecat, "polecat")
+	debugSession("ConfigureGasTownSession", m.tmux.ConfigureGasTownSession(sessionID, theme, m.rig.Name, polecat, "polecat"))
 
 	// Set pane-died hook for crash detection (non-fatal)
 	agentID := fmt.Sprintf("%s/%s", m.rig.Name, polecat)
-	_ = m.tmux.SetPaneDiedHook(sessionID, agentID)
+	debugSession("SetPaneDiedHook", m.tmux.SetPaneDiedHook(sessionID, agentID))
 
 	// Send initial command with env vars exported inline
 	// NOTE: tmux SetEnvironment only affects NEW panes, not the current shell.
@@ -189,15 +198,13 @@ func (m *Manager) Start(polecat string, opts StartOptions) error {
 	}
 
 	// Wait for Claude to start (non-fatal: session continues even if this times out)
-	if err := m.tmux.WaitForCommand(sessionID, constants.SupportedShells, constants.ClaudeStartTimeout); err != nil {
-		// Non-fatal warning - Claude might still start
-	}
+	debugSession("WaitForCommand", m.tmux.WaitForCommand(sessionID, constants.SupportedShells, constants.ClaudeStartTimeout))
 
 	// Accept bypass permissions warning dialog if it appears.
 	// When Claude starts with --dangerously-skip-permissions, it shows a warning that
 	// requires pressing Down to select "Yes, I accept" and Enter to confirm.
 	// This is needed for automated polecat startup.
-	_ = m.tmux.AcceptBypassPermissionsWarning(sessionID)
+	debugSession("AcceptBypassPermissionsWarning", m.tmux.AcceptBypassPermissionsWarning(sessionID))
 
 	// Wait for Claude to be fully ready at the prompt (not just started)
 	// PRAGMATIC APPROACH: Use fixed delay rather than detection.
@@ -209,12 +216,12 @@ func (m *Manager) Start(polecat string, opts StartOptions) error {
 	// Inject startup nudge for predecessor discovery via /resume
 	// This becomes the session title in Claude Code's session picker
 	address := fmt.Sprintf("%s/polecats/%s", m.rig.Name, polecat)
-	_ = StartupNudge(m.tmux, sessionID, StartupNudgeConfig{
+	debugSession("StartupNudge", StartupNudge(m.tmux, sessionID, StartupNudgeConfig{
 		Recipient: address,
 		Sender:    "witness",
 		Topic:     "assigned",
 		MolID:     opts.Issue,
-	}) // Non-fatal: session works without nudge
+	}))
 
 	// GUPP: Gas Town Universal Propulsion Principle
 	// Send the propulsion nudge to trigger autonomous work execution.
@@ -222,9 +229,7 @@ func (m *Manager) Start(polecat string, opts StartOptions) error {
 	// that triggers Claude to check the hook and begin work.
 	// Wait for beacon to be fully processed (needs to be separate prompt)
 	time.Sleep(2 * time.Second)
-	if err := m.tmux.NudgeSession(sessionID, PropulsionNudge()); err != nil {
-		// Non-fatal: witness can still nudge later
-	}
+	debugSession("NudgeSession PropulsionNudge", m.tmux.NudgeSession(sessionID, PropulsionNudge()))
 
 	return nil
 }
