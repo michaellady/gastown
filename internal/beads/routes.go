@@ -161,6 +161,58 @@ func GetPrefixForRig(townRoot, rigName string) string {
 	return "gt" // Default prefix
 }
 
+// GetRigPathForPrefix returns the rig path for a given prefix.
+// The prefix should include the trailing hyphen (e.g., "ga-").
+// Returns the full path (townRoot + route.Path) and true if found, empty and false otherwise.
+// The townRoot should be the Gas Town root directory (e.g., ~/gt).
+func GetRigPathForPrefix(townRoot, prefix string) (string, bool) {
+	beadsDir := filepath.Join(townRoot, ".beads")
+	routes, err := LoadRoutes(beadsDir)
+	if err != nil || routes == nil {
+		return "", false
+	}
+
+	for _, r := range routes {
+		if r.Prefix == prefix {
+			return filepath.Join(townRoot, r.Path), true
+		}
+	}
+
+	return "", false
+}
+
+// ExtractPrefixFromBeadID extracts the prefix (e.g., "ga-") from a bead ID (e.g., "ga-nu4").
+// Returns the prefix with trailing hyphen, or empty string if no hyphen found.
+func ExtractPrefixFromBeadID(beadID string) string {
+	idx := strings.Index(beadID, "-")
+	if idx == -1 {
+		return ""
+	}
+	return beadID[:idx+1] // Include the hyphen
+}
+
+// ResolveRigPathFromBeadID resolves the rig path for a bead ID by extracting its prefix
+// and looking it up in routes.jsonl.
+// Returns the rig path if found, or empty string if not found or bead uses hq- prefix (town-level).
+func ResolveRigPathFromBeadID(townRoot, beadID string) string {
+	// hq- beads are town-level, not routed to rigs
+	if strings.HasPrefix(beadID, "hq-") {
+		return ""
+	}
+
+	prefix := ExtractPrefixFromBeadID(beadID)
+	if prefix == "" {
+		return ""
+	}
+
+	rigPath, found := GetRigPathForPrefix(townRoot, prefix)
+	if !found {
+		return ""
+	}
+
+	return rigPath
+}
+
 // FindConflictingPrefixes checks for duplicate prefixes in routes.
 // Returns a map of prefix -> list of paths that use it.
 func FindConflictingPrefixes(beadsDir string) (map[string][]string, error) {

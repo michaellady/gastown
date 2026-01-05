@@ -431,13 +431,18 @@ func runSling(cmd *cobra.Command, args []string) error {
 	}
 
 	// Hook the bead using bd update
-	// Set BEADS_DIR to town-level beads so hq-* beads are accessible
-	// even when running from polecat worktree (which only sees gt-* via redirect)
+	// Resolve the correct directory for bd update based on bead prefix:
+	// - For rig-level beads (e.g., ga-*), use the rig path from routes.jsonl
+	// - For town-level beads (hq-*), use town root
+	// This ensures bd update runs from the database that owns the bead.
 	hookCmd := exec.Command("bd", "--no-daemon", "update", beadID, "--status=hooked", "--assignee="+targetAgent)
-	hookCmd.Env = append(os.Environ(), "BEADS_DIR="+townBeadsDir)
-	if hookWorkDir != "" {
-		hookCmd.Dir = hookWorkDir
+	rigPath := beads.ResolveRigPathFromBeadID(townRoot, beadID)
+	if rigPath != "" {
+		// Rig-level bead: run from the owning rig's directory
+		hookCmd.Dir = rigPath
 	} else {
+		// Town-level bead (hq-*) or unknown: use town beads
+		hookCmd.Env = append(os.Environ(), "BEADS_DIR="+townBeadsDir)
 		hookCmd.Dir = townRoot
 	}
 	hookCmd.Stderr = os.Stderr
@@ -1322,6 +1327,9 @@ func createAutoConvoy(beadID, beadTitle string) (string, error) {
 // runBatchSling handles slinging multiple beads to a rig.
 // Each bead gets its own freshly spawned polecat.
 func runBatchSling(beadIDs []string, rigName string, townBeadsDir string) error {
+	// Derive townRoot from townBeadsDir
+	townRoot := filepath.Dir(townBeadsDir)
+
 	// Validate all beads exist before spawning any polecats
 	for _, beadID := range beadIDs {
 		if err := verifyBeadExists(beadID); err != nil {
@@ -1403,10 +1411,16 @@ func runBatchSling(beadIDs []string, rigName string, townBeadsDir string) error 
 		}
 
 		// Hook the bead
+		// Resolve the correct directory for bd update based on bead prefix
 		hookCmd := exec.Command("bd", "--no-daemon", "update", beadID, "--status=hooked", "--assignee="+targetAgent)
-		hookCmd.Env = append(os.Environ(), "BEADS_DIR="+townBeadsDir)
-		if hookWorkDir != "" {
-			hookCmd.Dir = hookWorkDir
+		rigPath := beads.ResolveRigPathFromBeadID(townRoot, beadID)
+		if rigPath != "" {
+			// Rig-level bead: run from the owning rig's directory
+			hookCmd.Dir = rigPath
+		} else {
+			// Town-level bead (hq-*) or unknown: use town beads
+			hookCmd.Env = append(os.Environ(), "BEADS_DIR="+townBeadsDir)
+			hookCmd.Dir = townRoot
 		}
 		hookCmd.Stderr = os.Stderr
 		if err := hookCmd.Run(); err != nil {
