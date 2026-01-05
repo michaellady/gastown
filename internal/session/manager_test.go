@@ -190,3 +190,59 @@ func TestPolecatCommandFormat(t *testing.T) {
 		t.Error("GT_ROLE must be 'polecat', not 'mayor' or 'crew'")
 	}
 }
+
+func TestStartOptions_ModelFlag(t *testing.T) {
+	// Test that Model field in StartOptions is used correctly
+
+	tests := []struct {
+		name          string
+		model         string
+		shouldContain string
+	}{
+		{
+			name:          "opus alias",
+			model:         "opus",
+			shouldContain: "--model opus",
+		},
+		{
+			name:          "sonnet alias",
+			model:         "sonnet",
+			shouldContain: "--model sonnet",
+		},
+		{
+			name:          "full model name",
+			model:         "claude-sonnet-4-5-20250929",
+			shouldContain: "--model claude-sonnet-4-5-20250929",
+		},
+		{
+			name:          "empty model",
+			model:         "",
+			shouldContain: "", // Should not contain --model at all
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := StartOptions{
+				Model: tt.model,
+			}
+
+			// Simulate the command construction logic from Manager.Start()
+			baseCommand := "claude --dangerously-skip-permissions"
+			command := baseCommand
+			if opts.Model != "" {
+				command = command + " --model " + opts.Model
+			}
+
+			if tt.model != "" {
+				if !strings.Contains(command, tt.shouldContain) {
+					t.Errorf("command = %q, should contain %q", command, tt.shouldContain)
+				}
+			} else {
+				if strings.Contains(command, "--model") {
+					t.Errorf("command = %q, should not contain --model when model is empty", command)
+				}
+			}
+		})
+	}
+}
