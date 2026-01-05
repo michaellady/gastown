@@ -970,12 +970,12 @@ func getGitState(worktreePath string) (*GitState, error) {
 
 // RecoveryStatus represents whether a polecat needs recovery or is safe to nuke.
 type RecoveryStatus struct {
-	Rig           string `json:"rig"`
-	Polecat       string `json:"polecat"`
-	CleanupStatus string `json:"cleanup_status"`
-	NeedsRecovery bool   `json:"needs_recovery"`
-	Verdict       string `json:"verdict"` // SAFE_TO_NUKE or NEEDS_RECOVERY
-	Branch        string `json:"branch,omitempty"`
+	Rig           string                `json:"rig"`
+	Polecat       string                `json:"polecat"`
+	CleanupStatus polecat.CleanupStatus `json:"cleanup_status"`
+	NeedsRecovery bool                  `json:"needs_recovery"`
+	Verdict       string                `json:"verdict"` // SAFE_TO_NUKE or NEEDS_RECOVERY
+	Branch        string                `json:"branch,omitempty"`
 	Issue         string `json:"issue,omitempty"`
 }
 
@@ -1015,38 +1015,35 @@ func runPolecatCheckRecovery(cmd *cobra.Command, args []string) error {
 		// This handles polecats that haven't self-reported yet
 		gitState, gitErr := getGitState(p.ClonePath)
 		if gitErr != nil {
-			status.CleanupStatus = "unknown"
+			status.CleanupStatus = polecat.CleanupUnknown
 			status.NeedsRecovery = true
 			status.Verdict = "NEEDS_RECOVERY"
 		} else if gitState.Clean {
-			status.CleanupStatus = "clean"
+			status.CleanupStatus = polecat.CleanupClean
 			status.NeedsRecovery = false
 			status.Verdict = "SAFE_TO_NUKE"
 		} else if gitState.UnpushedCommits > 0 {
-			status.CleanupStatus = "has_unpushed"
+			status.CleanupStatus = polecat.CleanupUnpushed
 			status.NeedsRecovery = true
 			status.Verdict = "NEEDS_RECOVERY"
 		} else if gitState.StashCount > 0 {
-			status.CleanupStatus = "has_stash"
+			status.CleanupStatus = polecat.CleanupStash
 			status.NeedsRecovery = true
 			status.Verdict = "NEEDS_RECOVERY"
 		} else {
-			status.CleanupStatus = "has_uncommitted"
+			status.CleanupStatus = polecat.CleanupUncommitted
 			status.NeedsRecovery = true
 			status.Verdict = "NEEDS_RECOVERY"
 		}
 	} else {
 		// Use cleanup_status from agent bead
-		status.CleanupStatus = fields.CleanupStatus
-		switch fields.CleanupStatus {
-		case "clean":
+		status.CleanupStatus = polecat.CleanupStatus(fields.CleanupStatus)
+		if status.CleanupStatus.IsSafe() {
 			status.NeedsRecovery = false
 			status.Verdict = "SAFE_TO_NUKE"
-		case "has_uncommitted", "has_unpushed", "has_stash":
-			status.NeedsRecovery = true
-			status.Verdict = "NEEDS_RECOVERY"
-		default:
-			// Unknown or empty - be conservative
+		} else {
+			// RequiresRecovery covers uncommitted, stash, unpushed
+			// Unknown/empty also treated conservatively
 			status.NeedsRecovery = true
 			status.Verdict = "NEEDS_RECOVERY"
 		}
@@ -1275,19 +1272,20 @@ func runPolecatNuke(cmd *cobra.Command, args []string) error {
 				}
 			} else {
 				// Check cleanup_status from agent bead
-				switch fields.CleanupStatus {
-				case "clean":
+				cleanupStatus := polecat.CleanupStatus(fields.CleanupStatus)
+				switch cleanupStatus {
+				case polecat.CleanupClean:
 					// OK
-				case "has_unpushed":
+				case polecat.CleanupUnpushed:
 					reasons = append(reasons, "has unpushed commits")
-				case "has_uncommitted":
+				case polecat.CleanupUncommitted:
 					reasons = append(reasons, "has uncommitted changes")
-				case "has_stash":
+				case polecat.CleanupStash:
 					reasons = append(reasons, "has stashed changes")
-				case "unknown", "":
+				case polecat.CleanupUnknown, "":
 					reasons = append(reasons, "cleanup status unknown")
 				default:
-					reasons = append(reasons, fmt.Sprintf("cleanup status: %s", fields.CleanupStatus))
+					reasons = append(reasons, fmt.Sprintf("cleanup status: %s", cleanupStatus))
 				}
 
 				// Check 3: Work on hook (check both Issue.HookBead from slot and fields.HookBead)
@@ -1374,10 +1372,11 @@ func runPolecatNuke(cmd *cobra.Command, args []string) error {
 				}
 				fmt.Printf("    - Hook: %s\n", style.Dim.Render("unknown (no agent bead)"))
 			} else {
-				if fields.CleanupStatus == "clean" {
+				cleanupStatus := polecat.CleanupStatus(fields.CleanupStatus)
+				if cleanupStatus.IsSafe() {
 					fmt.Printf("    - Git state: %s\n", style.Success.Render("clean"))
-				} else if fields.CleanupStatus != "" {
-					fmt.Printf("    - Git state: %s (%s)\n", style.Error.Render("dirty"), fields.CleanupStatus)
+				} else if cleanupStatus.RequiresRecovery() {
+					fmt.Printf("    - Git state: %s (%s)\n", style.Error.Render("dirty"), cleanupStatus)
 				} else {
 					fmt.Printf("    - Git state: %s\n", style.Warning.Render("unknown"))
 				}

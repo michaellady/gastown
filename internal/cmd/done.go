@@ -11,6 +11,7 @@ import (
 	"github.com/steveyegge/gastown/internal/events"
 	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/mail"
+	"github.com/steveyegge/gastown/internal/polecat"
 	"github.com/steveyegge/gastown/internal/rig"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/workspace"
@@ -429,8 +430,8 @@ func updateAgentStateOnDone(cwd, townRoot, exitType, _ string) { // issueID unus
 	// ZFC #10: Self-report cleanup status
 	// Compute git state and report so Witness can decide removal safety
 	cleanupStatus := computeCleanupStatus(cwd)
-	if cleanupStatus != "" {
-		if err := bd.UpdateAgentCleanupStatus(agentBeadID, cleanupStatus); err != nil {
+	if cleanupStatus != polecat.CleanupUnknown {
+		if err := bd.UpdateAgentCleanupStatus(agentBeadID, string(cleanupStatus)); err != nil {
 			// Log warning instead of silent ignore
 			fmt.Fprintf(os.Stderr, "Warning: couldn't update agent %s cleanup status: %v\n", agentBeadID, err)
 			return
@@ -461,23 +462,23 @@ func getDispatcherFromBead(cwd, issueID string) string {
 
 // computeCleanupStatus checks git state and returns the cleanup status.
 // Returns the most critical issue: has_unpushed > has_stash > has_uncommitted > clean
-func computeCleanupStatus(cwd string) string {
+func computeCleanupStatus(cwd string) polecat.CleanupStatus {
 	g := git.NewGit(cwd)
 	status, err := g.CheckUncommittedWork()
 	if err != nil {
 		// If we can't check, report unknown - Witness should be cautious
-		return "unknown"
+		return polecat.CleanupUnknown
 	}
 
 	// Check in priority order (most critical first)
 	if status.UnpushedCommits > 0 {
-		return "has_unpushed"
+		return polecat.CleanupUnpushed
 	}
 	if status.StashCount > 0 {
-		return "has_stash"
+		return polecat.CleanupStash
 	}
 	if status.HasUncommittedChanges {
-		return "has_uncommitted"
+		return polecat.CleanupUncommitted
 	}
-	return "clean"
+	return polecat.CleanupClean
 }

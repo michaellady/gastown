@@ -104,39 +104,48 @@ func (m *Manager) agentBeadID(name string) string {
 }
 
 // getCleanupStatusFromBead reads the cleanup_status from the polecat's agent bead.
-// Returns empty string if the bead doesn't exist or has no cleanup_status.
+// Returns CleanupUnknown if the bead doesn't exist or has no cleanup_status.
 // ZFC #10: This is the ZFC-compliant way to check if removal is safe.
-func (m *Manager) getCleanupStatusFromBead(name string) string {
+func (m *Manager) getCleanupStatusFromBead(name string) CleanupStatus {
 	agentID := m.agentBeadID(name)
 	_, fields, err := m.beads.GetAgentBead(agentID)
 	if err != nil || fields == nil {
-		return ""
+		return CleanupUnknown
 	}
-	return fields.CleanupStatus
+	if fields.CleanupStatus == "" {
+		return CleanupUnknown
+	}
+	return CleanupStatus(fields.CleanupStatus)
 }
 
 // checkCleanupStatus validates the cleanup status against removal safety rules.
 // Returns an error if removal should be blocked based on the status.
 // force=true: allow has_uncommitted, block has_stash and has_unpushed
 // force=false: block all non-clean statuses
-func (m *Manager) checkCleanupStatus(name, cleanupStatus string, force bool) error {
-	switch cleanupStatus {
-	case "clean":
+func (m *Manager) checkCleanupStatus(name string, status CleanupStatus, force bool) error {
+	// Clean status is always safe
+	if status.IsSafe() {
 		return nil
-	case "has_uncommitted":
-		if force {
-			return nil // force bypasses uncommitted changes
-		}
+	}
+
+	// With force, uncommitted changes can be bypassed
+	if force && status.CanForceRemove() {
+		return nil
+	}
+
+	// Map status to appropriate error
+	switch status {
+	case CleanupUncommitted:
 		return &UncommittedWorkError{
 			PolecatName: name,
 			Status:      &git.UncommittedWorkStatus{HasUncommittedChanges: true},
 		}
-	case "has_stash":
+	case CleanupStash:
 		return &UncommittedWorkError{
 			PolecatName: name,
 			Status:      &git.UncommittedWorkStatus{StashCount: 1},
 		}
-	case "has_unpushed":
+	case CleanupUnpushed:
 		return &UncommittedWorkError{
 			PolecatName: name,
 			Status:      &git.UncommittedWorkStatus{UnpushedCommits: 1},
@@ -302,7 +311,7 @@ func (m *Manager) RemoveWithOptions(name string, force, nuclear bool) error {
 		// This is the ZFC-compliant path - trust what the polecat reported
 		cleanupStatus := m.getCleanupStatusFromBead(name)
 
-		if cleanupStatus != "" && cleanupStatus != "unknown" {
+		if cleanupStatus != CleanupUnknown {
 			// ZFC path: Use polecat's self-reported status
 			if err := m.checkCleanupStatus(name, cleanupStatus, force); err != nil {
 				return err
