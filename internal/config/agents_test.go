@@ -402,3 +402,195 @@ func TestCursorAgentPreset(t *testing.T) {
 		t.Errorf("cursor ResumeStyle = %q, want flag", info.ResumeStyle)
 	}
 }
+
+func TestListAgentPresetsMatchesConstants(t *testing.T) {
+	// Verify that ListAgentPresets() returns all AgentPreset constants.
+	// This test prevents future agents from being accidentally omitted
+	// from the registry.
+
+	// All known AgentPreset constants
+	knownPresets := []AgentPreset{
+		AgentClaude,
+		AgentGemini,
+		AgentCodex,
+		AgentCursor,
+	}
+
+	// Get presets from registry
+	listedPresets := ListAgentPresets()
+
+	// Create a map for quick lookup
+	listedMap := make(map[string]bool)
+	for _, name := range listedPresets {
+		listedMap[name] = true
+	}
+
+	// Verify all known constants are in the list
+	for _, preset := range knownPresets {
+		if !listedMap[string(preset)] {
+			t.Errorf("AgentPreset constant %q not found in ListAgentPresets()", preset)
+		}
+	}
+
+	// Verify the list has at least as many items as constants
+	// (could have more if user-defined agents are loaded)
+	if len(listedPresets) < len(knownPresets) {
+		t.Errorf("ListAgentPresets() returned %d items, expected at least %d",
+			len(listedPresets), len(knownPresets))
+	}
+}
+
+func TestAgentCommandGeneration(t *testing.T) {
+	// Test full command line generation for each agent type.
+	// Verifies YOLO flags, resume flags, and env var setup.
+
+	tests := []struct {
+		name      string
+		preset    AgentPreset
+		wantCmd   string
+		wantYOLO  string // A key YOLO flag that should be present
+		wantEnv   string // Session ID env var
+		sessionID string
+	}{
+		{
+			name:      "claude fresh start",
+			preset:    AgentClaude,
+			wantCmd:   "claude",
+			wantYOLO:  "--dangerously-skip-permissions",
+			wantEnv:   "CLAUDE_SESSION_ID",
+			sessionID: "",
+		},
+		{
+			name:      "claude resume",
+			preset:    AgentClaude,
+			wantCmd:   "claude",
+			wantYOLO:  "--dangerously-skip-permissions",
+			wantEnv:   "CLAUDE_SESSION_ID",
+			sessionID: "claude-sess-123",
+		},
+		{
+			name:      "gemini fresh start",
+			preset:    AgentGemini,
+			wantCmd:   "gemini",
+			wantYOLO:  "yolo",
+			wantEnv:   "GEMINI_SESSION_ID",
+			sessionID: "",
+		},
+		{
+			name:      "gemini resume",
+			preset:    AgentGemini,
+			wantCmd:   "gemini",
+			wantYOLO:  "yolo",
+			wantEnv:   "GEMINI_SESSION_ID",
+			sessionID: "gemini-sess-456",
+		},
+		{
+			name:      "codex fresh start",
+			preset:    AgentCodex,
+			wantCmd:   "codex",
+			wantYOLO:  "--yolo",
+			wantEnv:   "", // Codex uses JSONL output
+			sessionID: "",
+		},
+		{
+			name:      "codex resume",
+			preset:    AgentCodex,
+			wantCmd:   "codex",
+			wantYOLO:  "--yolo",
+			wantEnv:   "",
+			sessionID: "codex-sess-789",
+		},
+		{
+			name:      "cursor fresh start",
+			preset:    AgentCursor,
+			wantCmd:   "cursor-agent",
+			wantYOLO:  "-f",
+			wantEnv:   "CURSOR_CHAT_ID",
+			sessionID: "",
+		},
+		{
+			name:      "cursor resume",
+			preset:    AgentCursor,
+			wantCmd:   "cursor-agent",
+			wantYOLO:  "-f",
+			wantEnv:   "CURSOR_CHAT_ID",
+			sessionID: "cursor-sess-abc",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Test RuntimeConfig generation
+			rc := RuntimeConfigFromPreset(tt.preset)
+			if rc.Command != tt.wantCmd {
+				t.Errorf("RuntimeConfigFromPreset(%s).Command = %q, want %q",
+					tt.preset, rc.Command, tt.wantCmd)
+			}
+
+			// Verify YOLO flag is present
+			foundYOLO := false
+			for _, arg := range rc.Args {
+				if arg == tt.wantYOLO {
+					foundYOLO = true
+					break
+				}
+			}
+			if !foundYOLO {
+				t.Errorf("RuntimeConfigFromPreset(%s).Args = %v, missing YOLO flag %q",
+					tt.preset, rc.Args, tt.wantYOLO)
+			}
+
+			// Verify session ID env var
+			gotEnv := GetSessionIDEnvVar(string(tt.preset))
+			if gotEnv != tt.wantEnv {
+				t.Errorf("GetSessionIDEnvVar(%s) = %q, want %q",
+					tt.preset, gotEnv, tt.wantEnv)
+			}
+
+			// Test resume command generation
+			if tt.sessionID != "" {
+				resumeCmd := BuildResumeCommand(string(tt.preset), tt.sessionID)
+				if resumeCmd == "" {
+					t.Errorf("BuildResumeCommand(%s, %s) returned empty string",
+						tt.preset, tt.sessionID)
+				}
+				// Should contain the command
+				if !strings.Contains(resumeCmd, tt.wantCmd) {
+					t.Errorf("BuildResumeCommand result %q missing command %q",
+						resumeCmd, tt.wantCmd)
+				}
+				// Should contain the session ID
+				if !strings.Contains(resumeCmd, tt.sessionID) {
+					t.Errorf("BuildResumeCommand result %q missing session ID %q",
+						resumeCmd, tt.sessionID)
+				}
+				// Should contain YOLO flag
+				if !strings.Contains(resumeCmd, tt.wantYOLO) {
+					t.Errorf("BuildResumeCommand result %q missing YOLO flag %q",
+						resumeCmd, tt.wantYOLO)
+				}
+			}
+		})
+	}
+}
+
+func TestAgentCommandGeneration_ResumeStyles(t *testing.T) {
+	// Test the two resume styles: "flag" and "subcommand"
+
+	// Claude uses flag style: claude --resume <id>
+	claudeResume := BuildResumeCommand("claude", "sess-123")
+	if !strings.Contains(claudeResume, "--resume sess-123") {
+		t.Errorf("Claude resume should use flag style, got: %s", claudeResume)
+	}
+
+	// Codex uses subcommand style: codex resume <id>
+	codexResume := BuildResumeCommand("codex", "sess-456")
+	if !strings.Contains(codexResume, "codex resume sess-456") {
+		t.Errorf("Codex resume should use subcommand style, got: %s", codexResume)
+	}
+
+	// Verify codex resume has YOLO flag after session ID
+	if !strings.Contains(codexResume, "--yolo") {
+		t.Errorf("Codex resume should include --yolo, got: %s", codexResume)
+	}
+}

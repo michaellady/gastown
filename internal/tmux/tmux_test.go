@@ -304,3 +304,120 @@ func TestEnsureSessionFresh_IdempotentOnZombie(t *testing.T) {
 		t.Error("expected session to exist after multiple EnsureSessionFresh calls")
 	}
 }
+
+func TestIsAgentRunning(t *testing.T) {
+	if !hasTmux() {
+		t.Skip("tmux not installed")
+	}
+
+	tm := NewTmux()
+	sessionName := "gt-test-agent-" + t.Name()
+
+	// Clean up any existing session
+	_ = tm.KillSession(sessionName)
+
+	// Create session (runs shell by default)
+	if err := tm.NewSession(sessionName, ""); err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	defer func() { _ = tm.KillSession(sessionName) }()
+
+	// Get the current shell command (bash or zsh)
+	cmd, err := tm.GetPaneCommand(sessionName)
+	if err != nil {
+		t.Fatalf("GetPaneCommand: %v", err)
+	}
+
+	tests := []struct {
+		name         string
+		processNames []string
+		want         bool
+	}{
+		{
+			name:         "match current shell",
+			processNames: []string{cmd},
+			want:         true,
+		},
+		{
+			name:         "match one of multiple",
+			processNames: []string{"nonexistent", cmd, "other"},
+			want:         true,
+		},
+		{
+			name:         "no match - node (Claude)",
+			processNames: []string{"node"},
+			want:         false,
+		},
+		{
+			name:         "no match - cursor-agent",
+			processNames: []string{"cursor-agent"},
+			want:         false,
+		},
+		{
+			name:         "no match - gemini",
+			processNames: []string{"gemini"},
+			want:         false,
+		},
+		{
+			name:         "no match - codex",
+			processNames: []string{"codex"},
+			want:         false,
+		},
+		{
+			name:         "empty list - no match",
+			processNames: []string{},
+			want:         false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tm.IsAgentRunning(sessionName, tt.processNames)
+			if got != tt.want {
+				t.Errorf("IsAgentRunning(%q, %v) = %v, want %v", sessionName, tt.processNames, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsAgentRunning_NonexistentSession(t *testing.T) {
+	if !hasTmux() {
+		t.Skip("tmux not installed")
+	}
+
+	tm := NewTmux()
+
+	// IsAgentRunning should return false for nonexistent session (not error)
+	got := tm.IsAgentRunning("nonexistent-session-xyz", []string{"node"})
+	if got {
+		t.Error("IsAgentRunning should return false for nonexistent session")
+	}
+}
+
+func TestIsClaudeRunning_UsesIsAgentRunning(t *testing.T) {
+	if !hasTmux() {
+		t.Skip("tmux not installed")
+	}
+
+	tm := NewTmux()
+	sessionName := "gt-test-claude-" + t.Name()
+
+	// Clean up any existing session
+	_ = tm.KillSession(sessionName)
+
+	// Create session (runs shell by default, not node/Claude)
+	if err := tm.NewSession(sessionName, ""); err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	defer func() { _ = tm.KillSession(sessionName) }()
+
+	// IsClaudeRunning should return false since we're running a shell, not node
+	if tm.IsClaudeRunning(sessionName) {
+		t.Error("IsClaudeRunning should return false for shell session")
+	}
+
+	// Verify IsAgentRunning with ["node"] also returns false
+	if tm.IsAgentRunning(sessionName, []string{"node"}) {
+		t.Error("IsAgentRunning with [node] should return false for shell session")
+	}
+}
