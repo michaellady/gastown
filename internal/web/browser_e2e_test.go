@@ -75,11 +75,21 @@ func launchBrowser(cfg browserTestConfig) (*rod.Browser, func()) {
 
 // mockFetcher implements ConvoyFetcher for testing
 type mockFetcher struct {
-	convoys []ConvoyRow
+	convoys    []ConvoyRow
+	mergeQueue []MergeQueueRow
+	polecats   []PolecatRow
 }
 
 func (m *mockFetcher) FetchConvoys() ([]ConvoyRow, error) {
 	return m.convoys, nil
+}
+
+func (m *mockFetcher) FetchMergeQueue() ([]MergeQueueRow, error) {
+	return m.mergeQueue, nil
+}
+
+func (m *mockFetcher) FetchPolecats() ([]PolecatRow, error) {
+	return m.polecats, nil
 }
 
 // TestBrowser_ConvoyListLoads tests that the convoy list page loads correctly
@@ -248,8 +258,8 @@ func TestBrowser_HtmxAutoRefresh(t *testing.T) {
 	if !strings.Contains(html, "hx-trigger") {
 		t.Error("Expected hx-trigger attribute for auto-refresh")
 	}
-	if !strings.Contains(html, "every 30s") {
-		t.Error("Expected 'every 30s' trigger for auto-refresh")
+	if !strings.Contains(html, "every 10s") {
+		t.Error("Expected 'every 10s' trigger for auto-refresh")
 	}
 
 	// Verify htmx library is loaded

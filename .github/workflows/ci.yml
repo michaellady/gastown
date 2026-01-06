@@ -141,11 +141,8 @@ jobs:
         with:
           go-version: '1.24'
 
-      - name: Install Chromium for rod
-        run: |
-          # Install chromium browser for rod E2E tests
-          sudo apt-get update
-          sudo apt-get install -y chromium-browser
+      - name: Download dependencies
+        run: go mod download
 
       - name: Build
         run: go build -v ./cmd/gt
@@ -153,5 +150,5 @@ jobs:
       - name: Run Browser E2E Tests
         run: go test -tags=browser -timeout=5m -v ./internal/web/... -run TestBrowser
         env:
-          # Run headless in CI
+          # Run headless in CI - rod auto-downloads browser
           BROWSER_VISIBLE: "0"
