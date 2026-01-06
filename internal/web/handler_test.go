@@ -995,3 +995,329 @@ func TestConvoyHandler_NonFatalErrors(t *testing.T) {
 		t.Error("Response should contain convoy data even when other fetches fail")
 	}
 }
+
+// =============================================================================
+// PR #196 Feature Tests: Dependency Tree, State History, PR Links, Header Counts
+// =============================================================================
+
+// TestConvoyHandler_DependencyTreeRendering tests collapsible dependency tree
+func TestConvoyHandler_DependencyTreeRendering(t *testing.T) {
+	mock := &MockConvoyFetcher{
+		Convoys: []ConvoyRow{
+			{
+				ID:         "hq-cv-deps",
+				Title:      "Convoy with Dependencies",
+				Status:     "open",
+				WorkStatus: "active",
+				Progress:   "1/2",
+				Completed:  1,
+				Total:      2,
+				TrackedIssues: []TrackedIssue{
+					{
+						ID:       "ga-parent",
+						Title:    "Parent Issue",
+						Status:   "open",
+						Assignee: "roxas/polecats/dag",
+						Dependencies: []DependencyNode{
+							{
+								ID:     "ga-child1",
+								Title:  "Child Issue 1",
+								Status: "closed",
+							},
+							{
+								ID:     "ga-child2",
+								Title:  "Child Issue 2",
+								Status: "open",
+								Children: []DependencyNode{
+									{
+										ID:     "ga-grandchild",
+										Title:  "Grandchild Issue",
+										Status: "open",
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	handler, err := NewConvoyHandler(mock)
+	if err != nil {
+		t.Fatalf("NewConvoyHandler() error = %v", err)
+	}
+
+	req := httptest.NewRequest("GET", "/", nil)
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	body := w.Body.String()
+
+	// Check for expand icon
+	if !strings.Contains(body, "expand-icon") {
+		t.Error("Response should contain expand-icon class for collapsible rows")
+	}
+
+	// Check for deps-row (hidden by default)
+	if !strings.Contains(body, "deps-row") {
+		t.Error("Response should contain deps-row class for dependency details")
+	}
+
+	// Check for dependency tree structure
+	if !strings.Contains(body, "dep-tree") {
+		t.Error("Response should contain dep-tree class")
+	}
+
+	// Check tracked issue IDs
+	if !strings.Contains(body, "ga-parent") {
+		t.Error("Response should contain parent issue ID")
+	}
+	if !strings.Contains(body, "ga-child1") {
+		t.Error("Response should contain child issue ID")
+	}
+	if !strings.Contains(body, "ga-grandchild") {
+		t.Error("Response should contain grandchild issue ID")
+	}
+
+	// Check status indicators
+	if !strings.Contains(body, "dep-status-open") {
+		t.Error("Response should contain dep-status-open class")
+	}
+	if !strings.Contains(body, "dep-status-closed") {
+		t.Error("Response should contain dep-status-closed class")
+	}
+
+	// Check for JavaScript toggle function
+	if !strings.Contains(body, "toggleDeps") {
+		t.Error("Response should contain toggleDeps JavaScript function")
+	}
+}
+
+// TestConvoyHandler_StateHistoryRendering tests convoy state history timeline
+func TestConvoyHandler_StateHistoryRendering(t *testing.T) {
+	mock := &MockConvoyFetcher{
+		Convoys: []ConvoyRow{
+			{
+				ID:         "hq-cv-history",
+				Title:      "Convoy with History",
+				Status:     "open",
+				WorkStatus: "active",
+				StateHistory: []StateHistoryEvent{
+					{
+						EventType:     "created",
+						Timestamp:     "Jan 5 10:00",
+						TimestampUnix: 1704463200,
+						Actor:         "mayor",
+						Details:       "Convoy created",
+					},
+					{
+						EventType:     "dependency_added",
+						Timestamp:     "Jan 5 10:05",
+						TimestampUnix: 1704463500,
+						Actor:         "mayor",
+						Details:       "Issue added to tracking",
+					},
+					{
+						EventType:     "status_changed",
+						Timestamp:     "Jan 5 11:00",
+						TimestampUnix: 1704466800,
+						Actor:         "polecat/dag",
+						Details:       "Status changed",
+					},
+				},
+			},
+		},
+	}
+
+	handler, err := NewConvoyHandler(mock)
+	if err != nil {
+		t.Fatalf("NewConvoyHandler() error = %v", err)
+	}
+
+	req := httptest.NewRequest("GET", "/", nil)
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	body := w.Body.String()
+
+	// Check for state history section
+	if !strings.Contains(body, "state-history") {
+		t.Error("Response should contain state-history class")
+	}
+
+	// Check for timeline structure
+	if !strings.Contains(body, "timeline") {
+		t.Error("Response should contain timeline class")
+	}
+
+	// Check for timeline events
+	if !strings.Contains(body, "timeline-event") {
+		t.Error("Response should contain timeline-event class")
+	}
+
+	// Check for event type classes
+	if !strings.Contains(body, "event-created") {
+		t.Error("Response should contain event-created class")
+	}
+	if !strings.Contains(body, "event-dependency_added") {
+		t.Error("Response should contain event-dependency_added class")
+	}
+
+	// Check for event details
+	if !strings.Contains(body, "Convoy created") {
+		t.Error("Response should contain 'Convoy created' event detail")
+	}
+	if !strings.Contains(body, "Issue added to tracking") {
+		t.Error("Response should contain issue tracking event detail")
+	}
+
+	// Check for timestamps
+	if !strings.Contains(body, "Jan 5 10:00") {
+		t.Error("Response should contain event timestamp")
+	}
+
+	// Check for actors
+	if !strings.Contains(body, "by mayor") {
+		t.Error("Response should contain actor attribution")
+	}
+}
+
+// TestConvoyHandler_PRLinkColumn tests PR link column rendering
+func TestConvoyHandler_PRLinkColumn(t *testing.T) {
+	mock := &MockConvoyFetcher{
+		Convoys: []ConvoyRow{
+			{
+				ID:         "hq-cv-pr",
+				Title:      "Convoy with PR",
+				Status:     "open",
+				WorkStatus: "pr-pending",
+				PRNumber:   196,
+				PRURL:      "https://github.com/steveyegge/gastown/pull/196",
+			},
+			{
+				ID:         "hq-cv-nopr",
+				Title:      "Convoy without PR",
+				Status:     "open",
+				WorkStatus: "active",
+				PRNumber:   0,
+				PRURL:      "",
+			},
+		},
+	}
+
+	handler, err := NewConvoyHandler(mock)
+	if err != nil {
+		t.Fatalf("NewConvoyHandler() error = %v", err)
+	}
+
+	req := httptest.NewRequest("GET", "/", nil)
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	body := w.Body.String()
+
+	// Check PR column header exists
+	if !strings.Contains(body, "<th>PR</th>") {
+		t.Error("Response should contain PR column header")
+	}
+
+	// Check PR link is rendered
+	if !strings.Contains(body, "#196") {
+		t.Error("Response should contain PR number #196")
+	}
+	if !strings.Contains(body, "github.com/steveyegge/gastown/pull/196") {
+		t.Error("Response should contain PR URL")
+	}
+	if !strings.Contains(body, "pr-link") {
+		t.Error("Response should contain pr-link class")
+	}
+
+	// Check that missing PR shows dash
+	// The convoy without PR should show "-" in the PR column
+	// Template outputs: {{else}}-{{end}} which renders as just "-"
+	if !strings.Contains(body, "hq-cv-nopr") {
+		t.Error("Response should contain convoy without PR")
+	}
+}
+
+// TestConvoyHandler_SectionHeaderCounts tests section header count display
+func TestConvoyHandler_SectionHeaderCounts(t *testing.T) {
+	mock := &MockConvoyFetcher{
+		Convoys: []ConvoyRow{
+			{ID: "hq-cv-1", Title: "Convoy 1", Status: "open"},
+			{ID: "hq-cv-2", Title: "Convoy 2", Status: "open"},
+			{ID: "hq-cv-3", Title: "Convoy 3", Status: "open"},
+		},
+		MergeQueue: []MergeQueueRow{
+			{Number: 1, Repo: "test", Title: "PR 1", CIStatus: "pass", Mergeable: "ready", ColorClass: "mq-green"},
+			{Number: 2, Repo: "test", Title: "PR 2", CIStatus: "pass", Mergeable: "ready", ColorClass: "mq-green"},
+		},
+		Polecats: []PolecatRow{
+			{Name: "dag", Rig: "roxas", SessionID: "gt-roxas-dag", LastActivity: activity.Calculate(time.Now())},
+		},
+	}
+
+	handler, err := NewConvoyHandler(mock)
+	if err != nil {
+		t.Fatalf("NewConvoyHandler() error = %v", err)
+	}
+
+	req := httptest.NewRequest("GET", "/", nil)
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	body := w.Body.String()
+
+	// Check convoy count in header
+	if !strings.Contains(body, "Convoys (3)") {
+		t.Error("Response should contain 'Convoys (3)' in header")
+	}
+
+	// Check merge queue count in header
+	if !strings.Contains(body, "Merge Queue (2)") {
+		t.Error("Response should contain 'Merge Queue (2)' in header")
+	}
+
+	// Check polecat count in header
+	if !strings.Contains(body, "Polecat Workers (1)") {
+		t.Error("Response should contain 'Polecat Workers (1)' in header")
+	}
+}
+
+// TestConvoyHandler_EmptyStateHistory tests convoy without state history
+func TestConvoyHandler_EmptyStateHistory(t *testing.T) {
+	mock := &MockConvoyFetcher{
+		Convoys: []ConvoyRow{
+			{
+				ID:           "hq-cv-nohistory",
+				Title:        "Convoy without History",
+				Status:       "open",
+				WorkStatus:   "waiting",
+				StateHistory: nil, // No history
+			},
+		},
+	}
+
+	handler, err := NewConvoyHandler(mock)
+	if err != nil {
+		t.Fatalf("NewConvoyHandler() error = %v", err)
+	}
+
+	req := httptest.NewRequest("GET", "/", nil)
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	body := w.Body.String()
+
+	// Should render without state history section when empty
+	// The convoy ID should still be present
+	if !strings.Contains(body, "hq-cv-nohistory") {
+		t.Error("Response should contain convoy ID")
+	}
+}

@@ -129,3 +129,29 @@ jobs:
 
       - name: Integration Tests
         run: go test -tags=integration -timeout=5m -v ./internal/cmd/...
+
+  browser-e2e:
+    name: Browser E2E Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Install Chromium for rod
+        run: |
+          # Install chromium browser for rod E2E tests
+          sudo apt-get update
+          sudo apt-get install -y chromium-browser
+
+      - name: Build
+        run: go build -v ./cmd/gt
+
+      - name: Run Browser E2E Tests
+        run: go test -tags=browser -timeout=5m -v ./internal/web/... -run TestBrowser
+        env:
+          # Run headless in CI
+          BROWSER_VISIBLE: "0"
