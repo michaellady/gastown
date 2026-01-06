@@ -24,9 +24,6 @@ import (
 func runCrewRemove(cmd *cobra.Command, args []string) error {
 	var lastErr error
 
-	// --purge implies --force
-	forceRemove := crewForce || crewPurge
-
 	for _, arg := range args {
 		name := arg
 		rigOverride := crewRig
@@ -47,7 +44,7 @@ func runCrewRemove(cmd *cobra.Command, args []string) error {
 		}
 
 		// Check for running session (unless forced)
-		if !forceRemove {
+		if !crewForce {
 			t := tmux.NewTmux()
 			sessionID := crewSessionName(r.Name, name)
 			hasSession, _ := t.HasSession(sessionID)
@@ -70,115 +67,44 @@ func runCrewRemove(cmd *cobra.Command, args []string) error {
 			fmt.Printf("Killed session %s\n", sessionID)
 		}
 
-		// Determine workspace path
-		crewPath := filepath.Join(r.Path, "crew", name)
-
-		// Check if this is a worktree (has .git file) vs regular clone (has .git directory)
-		isWorktree := false
-		gitPath := filepath.Join(crewPath, ".git")
-		if info, err := os.Stat(gitPath); err == nil && !info.IsDir() {
-			isWorktree = true
+		// Remove the crew workspace
+		if err := crewMgr.Remove(name, crewForce); err != nil {
+			if err == crew.ErrCrewNotFound {
+				fmt.Printf("Error removing %s: crew workspace not found\n", arg)
+			} else if err == crew.ErrHasChanges {
+				fmt.Printf("Error removing %s: uncommitted changes (use --force)\n", arg)
+			} else {
+				fmt.Printf("Error removing %s: %v\n", arg, err)
+			}
+			lastErr = err
+			continue
 		}
 
-		// Remove the workspace
-		if isWorktree {
-			// For worktrees, use git worktree remove
-			mayorRigPath := constants.RigMayorPath(r.Path)
-			removeArgs := []string{"worktree", "remove", crewPath}
-			if forceRemove {
-				removeArgs = []string{"worktree", "remove", "--force", crewPath}
-			}
-			removeCmd := exec.Command("git", removeArgs...)
-			removeCmd.Dir = mayorRigPath
-			if output, err := removeCmd.CombinedOutput(); err != nil {
-				fmt.Printf("Error removing worktree %s: %v\n%s", arg, err, string(output))
-				lastErr = err
-				continue
-			}
-			fmt.Printf("%s Removed crew worktree: %s/%s\n",
-				style.Bold.Render("✓"), r.Name, name)
-		} else {
-			// For regular clones, use the crew manager
-			if err := crewMgr.Remove(name, forceRemove); err != nil {
-				if err == crew.ErrCrewNotFound {
-					fmt.Printf("Error removing %s: crew workspace not found\n", arg)
-				} else if err == crew.ErrHasChanges {
-					fmt.Printf("Error removing %s: uncommitted changes (use --force)\n", arg)
-				} else {
-					fmt.Printf("Error removing %s: %v\n", arg, err)
-				}
-				lastErr = err
-				continue
-			}
-			fmt.Printf("%s Removed crew workspace: %s/%s\n",
-				style.Bold.Render("✓"), r.Name, name)
-		}
+		fmt.Printf("%s Removed crew workspace: %s/%s\n",
+			style.Bold.Render("✓"), r.Name, name)
 
-		// Handle agent bead
+		// Close the agent bead if it exists
+		// Use the rig's configured prefix (e.g., "gt" for gastown, "bd" for beads)
 		townRoot, _ := workspace.Find(r.Path)
 		if townRoot == "" {
 			townRoot = r.Path
 		}
 		prefix := beads.GetPrefixForRig(townRoot, r.Name)
 		agentBeadID := beads.CrewBeadIDWithPrefix(prefix, r.Name, name)
-
-		if crewPurge {
-			// --purge: DELETE the agent bead entirely (obliterate)
-			deleteArgs := []string{"delete", agentBeadID, "--force"}
-			deleteCmd := exec.Command("bd", deleteArgs...)
-			deleteCmd.Dir = r.Path
-			if output, err := deleteCmd.CombinedOutput(); err != nil {
-				// Non-fatal: bead might not exist
-				if !strings.Contains(string(output), "no issue found") &&
-					!strings.Contains(string(output), "not found") {
-					style.PrintWarning("could not delete agent bead %s: %v", agentBeadID, err)
-				}
-			} else {
-				fmt.Printf("Deleted agent bead: %s\n", agentBeadID)
-			}
-
-			// Unassign any beads assigned to this crew member
-			agentAddr := fmt.Sprintf("%s/crew/%s", r.Name, name)
-			unassignArgs := []string{"list", "--assignee=" + agentAddr, "--format=id"}
-			unassignCmd := exec.Command("bd", unassignArgs...)
-			unassignCmd.Dir = r.Path
-			if output, err := unassignCmd.CombinedOutput(); err == nil {
-				ids := strings.Fields(strings.TrimSpace(string(output)))
-				for _, id := range ids {
-					if id == "" {
-						continue
-					}
-					updateCmd := exec.Command("bd", "update", id, "--unassign")
-					updateCmd.Dir = r.Path
-					if _, err := updateCmd.CombinedOutput(); err == nil {
-						fmt.Printf("Unassigned: %s\n", id)
-					}
-				}
-			}
-
-			// Clear mail directory if it exists
-			mailDir := filepath.Join(crewPath, "mail")
-			if _, err := os.Stat(mailDir); err == nil {
-				// Mail dir was removed with the workspace, so nothing to do
-				// But if we want to be extra thorough, we could look in town beads
+		closeArgs := []string{"close", agentBeadID, "--reason=Crew workspace removed"}
+		if sessionID := os.Getenv("CLAUDE_SESSION_ID"); sessionID != "" {
+			closeArgs = append(closeArgs, "--session="+sessionID)
+		}
+		closeCmd := exec.Command("bd", closeArgs...)
+		closeCmd.Dir = r.Path // Run from rig directory for proper beads resolution
+		if output, err := closeCmd.CombinedOutput(); err != nil {
+			// Non-fatal: bead might not exist or already be closed
+			if !strings.Contains(string(output), "no issue found") &&
+				!strings.Contains(string(output), "already closed") {
+				style.PrintWarning("could not close agent bead %s: %v", agentBeadID, err)
 			}
 		} else {
-			// Default: CLOSE the agent bead (preserves CV history)
-			closeArgs := []string{"close", agentBeadID, "--reason=Crew workspace removed"}
-			if sessionID := os.Getenv("CLAUDE_SESSION_ID"); sessionID != "" {
-				closeArgs = append(closeArgs, "--session="+sessionID)
-			}
-			closeCmd := exec.Command("bd", closeArgs...)
-			closeCmd.Dir = r.Path
-			if output, err := closeCmd.CombinedOutput(); err != nil {
-				// Non-fatal: bead might not exist or already be closed
-				if !strings.Contains(string(output), "no issue found") &&
-					!strings.Contains(string(output), "already closed") {
-					style.PrintWarning("could not close agent bead %s: %v", agentBeadID, err)
-				}
-			} else {
-				fmt.Printf("Closed agent bead: %s\n", agentBeadID)
-			}
+			fmt.Printf("Closed agent bead: %s\n", agentBeadID)
 		}
 	}
 
@@ -255,35 +181,34 @@ func runCrewRefresh(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("creating session: %w", err)
 	}
 
+	// Set environment (non-fatal: session works without these)
+	_ = t.SetEnvironment(sessionID, "GT_RIG", r.Name)
+	_ = t.SetEnvironment(sessionID, "GT_CREW", name)
+
 	// Wait for shell to be ready
 	if err := t.WaitForShellReady(sessionID, constants.ShellReadyTimeout); err != nil {
 		return fmt.Errorf("waiting for shell: %w", err)
 	}
 
-	// Build the startup beacon for predecessor discovery via /resume
-	// Pass it as Claude's initial prompt - processed when Claude is ready
-	address := fmt.Sprintf("%s/crew/%s", r.Name, name)
-	beacon := session.FormatStartupNudge(session.StartupNudgeConfig{
-		Recipient: address,
-		Sender:    "human",
-		Topic:     "refresh",
-	})
-
-	// Start claude with environment exports and beacon as initial prompt
-	// Refresh uses regular permissions (no --dangerously-skip-permissions)
-	// SessionStart hook handles context loading (gt prime --hook)
-	claudeCmd := config.BuildCrewStartupCommand(r.Name, name, r.Path, beacon)
-	// Remove --dangerously-skip-permissions for refresh (interactive mode)
-	claudeCmd = strings.Replace(claudeCmd, " --dangerously-skip-permissions", "", 1)
-	if err := t.SendKeys(sessionID, claudeCmd); err != nil {
+	// Start claude (refresh uses regular permissions, reads handoff mail)
+	if err := t.SendKeys(sessionID, "claude"); err != nil {
 		return fmt.Errorf("starting claude: %w", err)
 	}
 
-	// Wait for Claude to start (optional, for status feedback)
+	// Wait for Claude to start
 	shells := constants.SupportedShells
 	if err := t.WaitForCommand(sessionID, shells, constants.ClaudeStartTimeout); err != nil {
 		// Non-fatal
 	}
+	time.Sleep(constants.ShutdownNotifyDelay)
+
+	// Inject startup nudge for predecessor discovery via /resume
+	address := fmt.Sprintf("%s/crew/%s", r.Name, name)
+	_ = session.StartupNudge(t, sessionID, session.StartupNudgeConfig{
+		Recipient: address,
+		Sender:    "human",
+		Topic:     "refresh",
+	}) // Non-fatal
 
 	fmt.Printf("%s Refreshed crew workspace: %s/%s\n",
 		style.Bold.Render("✓"), r.Name, name)
@@ -293,30 +218,20 @@ func runCrewRefresh(cmd *cobra.Command, args []string) error {
 }
 
 // runCrewStart starts crew workers in a rig.
-// args[0] is the rig name (optional if inferrable from cwd)
-// args[1:] are crew member names (optional - defaults to all if not specified)
+// args[0] is the rig name (required)
+// args[1:] are crew member names (optional, or use --all flag)
 func runCrewStart(cmd *cobra.Command, args []string) error {
-	var rigName string
-	var crewNames []string
+	rigName := args[0]
+	crewNames := args[1:]
 
-	if len(args) == 0 {
-		// No args - infer rig from cwd
-		rigName = "" // getCrewManager will infer from cwd
-	} else {
-		rigName = args[0]
-		crewNames = args[1:]
-	}
-
-	// Get the rig manager and rig (infers from cwd if rigName is empty)
+	// Get the rig manager and rig
 	crewMgr, r, err := getCrewManager(rigName)
 	if err != nil {
 		return err
 	}
-	// Update rigName in case it was inferred
-	rigName = r.Name
 
-	// If --all flag OR no crew names specified, get all crew members
-	if crewAll || len(crewNames) == 0 {
+	// If --all flag, get all crew members
+	if crewAll {
 		workers, err := crewMgr.List()
 		if err != nil {
 			return fmt.Errorf("listing crew: %w", err)
@@ -421,7 +336,10 @@ func runCrewRestart(cmd *cobra.Command, args []string) error {
 		}
 
 		// Set environment
-		_ = t.SetEnvironment(sessionID, "GT_ROLE", "crew")
+		t.SetEnvironment(sessionID, "GT_ROLE", "crew")
+		t.SetEnvironment(sessionID, "GT_RIG", r.Name)
+		t.SetEnvironment(sessionID, "GT_CREW", name)
+
 		// Apply rig-based theming (non-fatal: theming failure doesn't affect operation)
 		theme := getThemeForRig(r.Name)
 		_ = t.ConfigureGasTownSession(sessionID, theme, r.Name, name, "crew")
@@ -433,29 +351,43 @@ func runCrewRestart(cmd *cobra.Command, args []string) error {
 			continue
 		}
 
-		// Build the startup beacon for predecessor discovery via /resume
-		// Pass it as Claude's initial prompt - processed when Claude is ready
-		address := fmt.Sprintf("%s/crew/%s", r.Name, name)
-		beacon := session.FormatStartupNudge(session.StartupNudgeConfig{
-			Recipient: address,
-			Sender:    "human",
-			Topic:     "restart",
-		})
-
-		// Start claude with environment exports and beacon as initial prompt
-		// SessionStart hook handles context loading (gt prime --hook)
-		// The startup protocol tells agent to check mail/hook, no explicit prompt needed
-		claudeCmd := config.BuildCrewStartupCommand(r.Name, name, r.Path, beacon)
+		// Start claude with skip permissions (crew workers are trusted)
+		// Export GT_ROLE and BD_ACTOR since tmux SetEnvironment only affects new panes
+		claudeCmd := config.BuildCrewStartupCommand(r.Name, name, r.Path, "")
 		if err := t.SendKeys(sessionID, claudeCmd); err != nil {
 			fmt.Printf("Error starting claude for %s: %v\n", arg, err)
 			lastErr = err
 			continue
 		}
 
-		// Wait for Claude to start (optional, for status feedback)
+		// Wait for Claude to start, then prime it
 		shells := constants.SupportedShells
 		if err := t.WaitForCommand(sessionID, shells, constants.ClaudeStartTimeout); err != nil {
 			style.PrintWarning("Timeout waiting for Claude to start for %s: %v", arg, err)
+		}
+		// Give Claude time to initialize after process starts
+		time.Sleep(constants.ShutdownNotifyDelay)
+
+		// Inject startup nudge for predecessor discovery via /resume
+		address := fmt.Sprintf("%s/crew/%s", r.Name, name)
+		_ = session.StartupNudge(t, sessionID, session.StartupNudgeConfig{
+			Recipient: address,
+			Sender:    "human",
+			Topic:     "restart",
+		}) // Non-fatal: session works without nudge
+
+		if err := t.NudgeSession(sessionID, "gt prime"); err != nil {
+			// Non-fatal: Claude started but priming failed
+			style.PrintWarning("Could not send prime command to %s: %v", arg, err)
+		}
+
+		// Send crew resume prompt after prime completes
+		// Use NudgeSession (the canonical way to message Claude) with longer pre-delay
+		// to ensure gt prime has finished processing
+		time.Sleep(5 * time.Second)
+		crewPrompt := "Read your mail, act on anything urgent, else await instructions."
+		if err := t.NudgeSession(sessionID, crewPrompt); err != nil {
+			style.PrintWarning("Could not send resume prompt to %s: %v", arg, err)
 		}
 
 		fmt.Printf("%s Restarted crew workspace: %s/%s\n",
@@ -582,6 +514,11 @@ func restartCrewSession(rigName, crewName, clonePath string) error {
 		return fmt.Errorf("creating session: %w", err)
 	}
 
+	// Set environment
+	t.SetEnvironment(sessionID, "GT_ROLE", "crew")
+	t.SetEnvironment(sessionID, "GT_RIG", rigName)
+	t.SetEnvironment(sessionID, "GT_CREW", crewName)
+
 	// Apply rig-based theming
 	theme := getThemeForRig(rigName)
 	_ = t.ConfigureGasTownSession(sessionID, theme, rigName, crewName, "crew")
@@ -591,54 +528,45 @@ func restartCrewSession(rigName, crewName, clonePath string) error {
 		return fmt.Errorf("waiting for shell: %w", err)
 	}
 
-	// Build the startup beacon for predecessor discovery via /resume
-	// Pass it as Claude's initial prompt - processed when Claude is ready
-	address := fmt.Sprintf("%s/crew/%s", rigName, crewName)
-	beacon := session.FormatStartupNudge(session.StartupNudgeConfig{
-		Recipient: address,
-		Sender:    "human",
-		Topic:     "restart",
-	})
-
-	// Start claude with environment exports and beacon as initial prompt
-	// SessionStart hook handles context loading (gt prime --hook)
-	claudeCmd := config.BuildCrewStartupCommand(rigName, crewName, "", beacon)
+	// Start claude with skip permissions
+	claudeCmd := config.BuildCrewStartupCommand(rigName, crewName, "", "")
 	if err := t.SendKeys(sessionID, claudeCmd); err != nil {
 		return fmt.Errorf("starting claude: %w", err)
 	}
 
-	// Wait for Claude to start (optional, for status feedback)
+	// Wait for Claude to start, then prime it
 	shells := constants.SupportedShells
 	if err := t.WaitForCommand(sessionID, shells, constants.ClaudeStartTimeout); err != nil {
 		// Non-fatal warning
 	}
+	time.Sleep(constants.ShutdownNotifyDelay)
+
+	// Inject startup nudge for predecessor discovery via /resume
+	address := fmt.Sprintf("%s/crew/%s", rigName, crewName)
+	_ = session.StartupNudge(t, sessionID, session.StartupNudgeConfig{
+		Recipient: address,
+		Sender:    "human",
+		Topic:     "restart",
+	}) // Non-fatal
+
+	if err := t.NudgeSession(sessionID, "gt prime"); err != nil {
+		// Non-fatal
+	}
+
+	// Send crew resume prompt after prime completes
+	time.Sleep(5 * time.Second)
+	crewPrompt := "Read your mail, act on anything urgent, else await instructions."
+	_ = t.NudgeSession(sessionID, crewPrompt)
 
 	return nil
 }
 
 // runCrewStop stops one or more crew workers.
-// Supports: "name", "rig/name" formats, "rig" (to stop all in rig), or --all.
+// Supports: "name", "rig/name" formats, or --all to stop all.
 func runCrewStop(cmd *cobra.Command, args []string) error {
 	// Handle --all flag
 	if crewAll {
 		return runCrewStopAll()
-	}
-
-	// Handle 0 args: default to all in inferred rig
-	if len(args) == 0 {
-		return runCrewStopAll()
-	}
-
-	// Handle 1 arg without "/": check if it's a rig name
-	// If so, stop all crew in that rig
-	if len(args) == 1 && !strings.Contains(args[0], "/") {
-		// Try to interpret as rig name
-		if _, _, err := getRig(args[0]); err == nil {
-			// It's a valid rig name - stop all crew in that rig
-			crewRig = args[0]
-			return runCrewStopAll()
-		}
-		// Not a rig name - fall through to treat as crew name
 	}
 
 	var lastErr error
@@ -666,20 +594,9 @@ func runCrewStop(cmd *cobra.Command, args []string) error {
 		sessionID := crewSessionName(r.Name, name)
 
 		// Check if session exists
-		hasSession, err := t.HasSession(sessionID)
-		if err != nil {
-			fmt.Printf("Error checking session %s: %v\n", sessionID, err)
-			lastErr = err
-			continue
-		}
+		hasSession, _ := t.HasSession(sessionID)
 		if !hasSession {
 			fmt.Printf("No session found for %s/%s\n", r.Name, name)
-			continue
-		}
-
-		// Dry run - just show what would be stopped
-		if crewDryRun {
-			fmt.Printf("Would stop %s/%s (session: %s)\n", r.Name, name, sessionID)
 			continue
 		}
 
@@ -708,7 +625,7 @@ func runCrewStop(cmd *cobra.Command, args []string) error {
 		if townRoot != "" {
 			agent := fmt.Sprintf("%s/crew/%s", r.Name, name)
 			logger := townlog.NewLogger(townRoot)
-			_ = logger.Log(townlog.EventKill, agent, "gt crew stop")
+			logger.Log(townlog.EventKill, agent, "gt crew stop")
 		}
 
 		// Log captured output (truncated)
@@ -794,7 +711,7 @@ func runCrewStopAll() error {
 		townRoot, _ := workspace.FindFromCwd()
 		if townRoot != "" {
 			logger := townlog.NewLogger(townRoot)
-			_ = logger.Log(townlog.EventKill, agentName, "gt crew stop --all")
+			logger.Log(townlog.EventKill, agentName, "gt crew stop --all")
 		}
 
 		// Log captured output (truncated)

@@ -24,18 +24,14 @@ type Templates struct {
 
 // RoleData contains information for rendering role contexts.
 type RoleData struct {
-	Role           string   // mayor, witness, refinery, polecat, crew, deacon
-	RigName        string   // e.g., "greenplace"
-	TownRoot       string   // e.g., "/Users/steve/ai"
-	TownName       string   // e.g., "ai" - the town identifier for session names
-	WorkDir        string   // current working directory
-	DefaultBranch  string   // default branch for merges (e.g., "main", "develop")
-	Polecat        string   // polecat name (for polecat role)
-	Polecats       []string // list of polecats (for witness role)
-	BeadsDir       string   // BEADS_DIR path
-	IssuePrefix    string   // beads issue prefix
-	MayorSession   string   // e.g., "gt-ai-mayor" - dynamic mayor session name
-	DeaconSession  string   // e.g., "gt-ai-deacon" - dynamic deacon session name
+	Role        string   // mayor, witness, refinery, polecat, crew, deacon
+	RigName     string   // e.g., "greenplace"
+	TownRoot    string   // e.g., "/Users/steve/ai"
+	WorkDir     string   // current working directory
+	Polecat     string   // polecat name (for polecat role)
+	Polecats    []string // list of polecats (for witness role)
+	BeadsDir    string   // BEADS_DIR path
+	IssuePrefix string   // beads issue prefix
 }
 
 // SpawnData contains information for spawn assignment messages.
@@ -191,7 +187,7 @@ func ProvisionCommands(workspacePath string) error {
 			return fmt.Errorf("reading %s: %w", entry.Name(), err)
 		}
 
-		if err := os.WriteFile(destPath, content, 0644); err != nil { //nolint:gosec // G306: template files are non-sensitive
+		if err := os.WriteFile(destPath, content, 0644); err != nil {
 			return fmt.Errorf("writing %s: %w", entry.Name(), err)
 		}
 	}

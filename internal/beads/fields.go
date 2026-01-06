@@ -20,7 +20,6 @@ type AttachmentFields struct {
 	AttachedMolecule string // Root issue ID of the attached molecule
 	AttachedAt       string // ISO 8601 timestamp when attached
 	AttachedArgs     string // Natural language args passed via gt sling --args (no-tmux mode)
-	DispatchedBy     string // Agent ID that dispatched this work (for completion notification)
 }
 
 // ParseAttachmentFields extracts attachment fields from an issue's description.
@@ -62,9 +61,6 @@ func ParseAttachmentFields(issue *Issue) *AttachmentFields {
 		case "attached_args", "attached-args", "attachedargs":
 			fields.AttachedArgs = value
 			hasFields = true
-		case "dispatched_by", "dispatched-by", "dispatchedby":
-			fields.DispatchedBy = value
-			hasFields = true
 		}
 	}
 
@@ -92,9 +88,6 @@ func FormatAttachmentFields(fields *AttachmentFields) string {
 	if fields.AttachedArgs != "" {
 		lines = append(lines, "attached_args: "+fields.AttachedArgs)
 	}
-	if fields.DispatchedBy != "" {
-		lines = append(lines, "dispatched_by: "+fields.DispatchedBy)
-	}
 
 	return strings.Join(lines, "\n")
 }
@@ -114,9 +107,6 @@ func SetAttachmentFields(issue *Issue, fields *AttachmentFields) string {
 		"attached_args":     true,
 		"attached-args":     true,
 		"attachedargs":      true,
-		"dispatched_by":     true,
-		"dispatched-by":     true,
-		"dispatchedby":      true,
 	}
 
 	// Collect non-attachment lines from existing description
@@ -509,7 +499,7 @@ func FormatSynthesisFields(fields *SynthesisFields) string {
 type RoleConfig struct {
 	// SessionPattern defines how to derive tmux session name.
 	// Supports placeholders: {rig}, {name}, {role}
-	// Examples: "hq-mayor", "hq-deacon", "gt-{rig}-{role}", "gt-{rig}-{name}"
+	// Examples: "gt-mayor", "gt-{rig}-{role}", "gt-{rig}-{name}"
 	SessionPattern string
 
 	// WorkDirPattern defines the working directory relative to town root.

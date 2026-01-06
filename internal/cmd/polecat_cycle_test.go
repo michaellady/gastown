@@ -64,14 +64,14 @@ func TestParsePolecatSessionName(t *testing.T) {
 		},
 		{
 			name:        "mayor session",
-			sessionName: "gt-ai-mayor",
+			sessionName: "gt-mayor",
 			wantRig:     "",
 			wantPolecat: "",
 			wantOk:      false,
 		},
 		{
 			name:        "deacon session",
-			sessionName: "gt-ai-deacon",
+			sessionName: "gt-deacon",
 			wantRig:     "",
 			wantPolecat: "",
 			wantOk:      false,

@@ -143,9 +143,8 @@ func runNudge(cmd *cobra.Command, args []string) error {
 
 	// Special case: "deacon" target maps to the Deacon session
 	if target == "deacon" {
-		deaconSession := session.DeaconSessionName()
 		// Check if Deacon session exists
-		exists, err := t.HasSession(deaconSession)
+		exists, err := t.HasSession(DeaconSessionName)
 		if err != nil {
 			return fmt.Errorf("checking deacon session: %w", err)
 		}
@@ -155,7 +154,7 @@ func runNudge(cmd *cobra.Command, args []string) error {
 			return nil
 		}
 
-		if err := t.NudgeSession(deaconSession, message); err != nil {
+		if err := t.NudgeSession(DeaconSessionName, message); err != nil {
 			return fmt.Errorf("nudging deacon: %w", err)
 		}
 
@@ -163,7 +162,7 @@ func runNudge(cmd *cobra.Command, args []string) error {
 
 		// Log nudge event
 		if townRoot, err := workspace.FindFromCwd(); err == nil && townRoot != "" {
-			_ = LogNudge(townRoot, "deacon", message)
+			LogNudge(townRoot, "deacon", message)
 		}
 		_ = events.LogFeed(events.TypeNudge, sender, events.NudgePayload("", "deacon", message))
 		return nil
@@ -202,7 +201,7 @@ func runNudge(cmd *cobra.Command, args []string) error {
 
 		// Log nudge event
 		if townRoot, err := workspace.FindFromCwd(); err == nil && townRoot != "" {
-			_ = LogNudge(townRoot, target, message)
+			LogNudge(townRoot, target, message)
 		}
 		_ = events.LogFeed(events.TypeNudge, sender, events.NudgePayload(rigName, target, message))
 	} else {
@@ -223,7 +222,7 @@ func runNudge(cmd *cobra.Command, args []string) error {
 
 		// Log nudge event
 		if townRoot, err := workspace.FindFromCwd(); err == nil && townRoot != "" {
-			_ = LogNudge(townRoot, target, message)
+			LogNudge(townRoot, target, message)
 		}
 		_ = events.LogFeed(events.TypeNudge, sender, events.NudgePayload("", target, message))
 	}
@@ -351,8 +350,7 @@ func runNudgeChannel(channelName, message string) error {
 //   - Literal: "gastown/witness" → gt-gastown-witness
 //   - Wildcard: "gastown/polecats/*" → all polecat sessions in gastown
 //   - Role: "*/witness" → all witness sessions
-//   - Special: "mayor", "deacon" → gt-{town}-mayor, gt-{town}-deacon
-// townName is used to generate the correct session names for mayor/deacon.
+//   - Special: "mayor", "deacon" → gt-mayor, gt-deacon
 func resolveNudgePattern(pattern string, agents []*AgentSession) []string {
 	var results []string
 
@@ -361,7 +359,7 @@ func resolveNudgePattern(pattern string, agents []*AgentSession) []string {
 	case "mayor":
 		return []string{session.MayorSessionName()}
 	case "deacon":
-		return []string{session.DeaconSessionName()}
+		return []string{DeaconSessionName}
 	}
 
 	// Parse pattern
@@ -424,7 +422,7 @@ func resolveNudgePattern(pattern string, agents []*AgentSession) []string {
 // Returns (shouldSend bool, level string, err error).
 // If force is true, always returns true.
 // If the agent bead cannot be found, returns true (fail-open for backward compatibility).
-func shouldNudgeTarget(townRoot, targetAddress string, force bool) (bool, string, error) { //nolint:unparam // error return kept for future use
+func shouldNudgeTarget(townRoot, targetAddress string, force bool) (bool, string, error) {
 	if force {
 		return true, "", nil
 	}
@@ -449,8 +447,7 @@ func shouldNudgeTarget(townRoot, targetAddress string, force bool) (bool, string
 
 // addressToAgentBeadID converts a target address to an agent bead ID.
 // Examples:
-//   - "mayor" -> "gt-{town}-mayor"
-//   - "deacon" -> "gt-{town}-deacon"
+//   - "mayor" -> "gt-mayor" (or similar)
 //   - "gastown/witness" -> "gt-gastown-witness"
 //   - "gastown/alpha" -> "gt-gastown-polecat-alpha"
 //
@@ -459,9 +456,9 @@ func addressToAgentBeadID(address string) string {
 	// Handle special cases
 	switch address {
 	case "mayor":
-		return session.MayorSessionName()
+		return "gt-mayor"
 	case "deacon":
-		return session.DeaconSessionName()
+		return "gt-deacon"
 	}
 
 	// Parse rig/role format

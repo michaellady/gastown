@@ -55,7 +55,7 @@ func WriteHeartbeat(townRoot string, hb *Heartbeat) error {
 		return err
 	}
 
-	return os.WriteFile(hbFile, data, 0600)
+	return os.WriteFile(hbFile, data, 0644)
 }
 
 // ReadHeartbeat reads the Deacon heartbeat from disk.
@@ -63,7 +63,7 @@ func WriteHeartbeat(townRoot string, hb *Heartbeat) error {
 func ReadHeartbeat(townRoot string) *Heartbeat {
 	hbFile := HeartbeatFile(townRoot)
 
-	data, err := os.ReadFile(hbFile) //nolint:gosec // G304: path is constructed from trusted townRoot
+	data, err := os.ReadFile(hbFile)
 	if err != nil {
 		return nil
 	}

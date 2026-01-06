@@ -1,29 +1,19 @@
 // Package session provides polecat session lifecycle management.
 package session
 
-import (
-	"fmt"
-	"os"
-	"path/filepath"
-	"strings"
-)
+import "fmt"
 
-// Prefix is the common prefix for rig-level Gas Town tmux sessions.
+// Prefix is the common prefix for all Gas Town tmux session names.
 const Prefix = "gt-"
 
-// HQPrefix is the prefix for town-level services (Mayor, Deacon).
-const HQPrefix = "hq-"
-
 // MayorSessionName returns the session name for the Mayor agent.
-// One mayor per machine - multi-town requires containers/VMs for isolation.
 func MayorSessionName() string {
-	return HQPrefix + "mayor"
+	return Prefix + "mayor"
 }
 
 // DeaconSessionName returns the session name for the Deacon agent.
-// One deacon per machine - multi-town requires containers/VMs for isolation.
 func DeaconSessionName() string {
-	return HQPrefix + "deacon"
+	return Prefix + "deacon"
 }
 
 // WitnessSessionName returns the session name for a rig's Witness agent.
@@ -60,43 +50,19 @@ func PropulsionNudge() string {
 // - witness/refinery: Start patrol cycle
 // - deacon: Start heartbeat patrol
 // - mayor: Check mail for coordination work
-//
-// The workDir parameter is used to locate .runtime/session_id for including
-// session ID in the message (for Claude Code /resume picker discovery).
-func PropulsionNudgeForRole(role, workDir string) string {
-	var msg string
+func PropulsionNudgeForRole(role string) string {
 	switch role {
 	case "polecat", "crew":
-		msg = PropulsionNudge()
+		return PropulsionNudge()
 	case "witness":
-		msg = "Run `gt prime` to check patrol status and begin work."
+		return "Run `gt prime` to check patrol status and begin work."
 	case "refinery":
-		msg = "Run `gt prime` to check MQ status and begin patrol."
+		return "Run `gt prime` to check MQ status and begin patrol."
 	case "deacon":
-		msg = "Run `gt prime` to check patrol status and begin heartbeat cycle."
+		return "Run `gt prime` to check patrol status and begin heartbeat cycle."
 	case "mayor":
-		msg = "Run `gt prime` to check mail and begin coordination."
+		return "Run `gt prime` to check mail and begin coordination."
 	default:
-		msg = PropulsionNudge()
+		return PropulsionNudge()
 	}
-
-	// Append session ID if available (for /resume picker visibility)
-	if sessionID := readSessionID(workDir); sessionID != "" {
-		msg = fmt.Sprintf("%s [session:%s]", msg, sessionID)
-	}
-	return msg
-}
-
-// readSessionID reads the session ID from .runtime/session_id if it exists.
-// Returns empty string if the file doesn't exist or can't be read.
-func readSessionID(workDir string) string {
-	if workDir == "" {
-		return ""
-	}
-	sessionPath := filepath.Join(workDir, ".runtime", "session_id")
-	data, err := os.ReadFile(sessionPath)
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(data))
 }

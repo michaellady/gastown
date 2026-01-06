@@ -131,11 +131,9 @@ func (t *Tmux) IsAvailable() bool {
 	return cmd.Run() == nil
 }
 
-// HasSession checks if a session exists (exact match).
-// Uses "=" prefix for exact matching, preventing prefix matches
-// (e.g., "gt-deacon-boot" won't match when checking for "gt-deacon").
+// HasSession checks if a session exists.
 func (t *Tmux) HasSession(name string) (bool, error) {
-	_, err := t.run("has-session", "-t", "="+name)
+	_, err := t.run("has-session", "-t", name)
 	if err != nil {
 		if errors.Is(err, ErrSessionNotFound) || errors.Is(err, ErrNoServer) {
 			return false, nil
@@ -274,19 +272,12 @@ func (t *Tmux) NudgeSession(session, message string) error {
 	// 2. Wait 500ms for paste to complete (tested, required)
 	time.Sleep(500 * time.Millisecond)
 
-	// 3. Send Enter with retry (critical for message submission)
-	var lastErr error
-	for attempt := 0; attempt < 3; attempt++ {
-		if attempt > 0 {
-			time.Sleep(200 * time.Millisecond)
-		}
-		if _, err := t.run("send-keys", "-t", session, "Enter"); err != nil {
-			lastErr = err
-			continue
-		}
-		return nil
+	// 3. Send Enter as separate command (key to reliability)
+	if _, err := t.run("send-keys", "-t", session, "Enter"); err != nil {
+		return err
 	}
-	return fmt.Errorf("failed to send Enter after 3 attempts: %w", lastErr)
+
+	return nil
 }
 
 // NudgePane sends a message to a specific pane reliably.
@@ -300,19 +291,12 @@ func (t *Tmux) NudgePane(pane, message string) error {
 	// 2. Wait 500ms for paste to complete (tested, required)
 	time.Sleep(500 * time.Millisecond)
 
-	// 3. Send Enter with retry (critical for message submission)
-	var lastErr error
-	for attempt := 0; attempt < 3; attempt++ {
-		if attempt > 0 {
-			time.Sleep(200 * time.Millisecond)
-		}
-		if _, err := t.run("send-keys", "-t", pane, "Enter"); err != nil {
-			lastErr = err
-			continue
-		}
-		return nil
+	// 3. Send Enter as separate command (key to reliability)
+	if _, err := t.run("send-keys", "-t", pane, "Enter"); err != nil {
+		return err
 	}
-	return fmt.Errorf("failed to send Enter after 3 attempts: %w", lastErr)
+
+	return nil
 }
 
 // AcceptBypassPermissionsWarning dismisses the Claude Code bypass permissions warning dialog.
@@ -526,29 +510,15 @@ Run: gt mail inbox
 	return t.SendKeys(session, banner)
 }
 
-// IsAgentRunning checks if any of the specified process names are running in the session.
-// This is the generalized version of IsClaudeRunning that supports multiple agent types.
-// processNames should contain the expected pane_current_command values (e.g., ["node"] for Claude,
-// ["cursor-agent"] for Cursor).
-func (t *Tmux) IsAgentRunning(session string, processNames []string) bool {
+// IsClaudeRunning checks if Claude appears to be running in the session.
+// Only trusts the pane command - UI markers in scrollback cause false positives.
+func (t *Tmux) IsClaudeRunning(session string) bool {
+	// Check pane command - Claude runs as node
 	cmd, err := t.GetPaneCommand(session)
 	if err != nil {
 		return false
 	}
-	for _, name := range processNames {
-		if cmd == name {
-			return true
-		}
-	}
-	return false
-}
-
-// IsClaudeRunning checks if Claude appears to be running in the session.
-// Only trusts the pane command - UI markers in scrollback cause false positives.
-// This is a convenience wrapper around IsAgentRunning for backwards compatibility.
-func (t *Tmux) IsClaudeRunning(session string) bool {
-	// Check pane command - Claude runs as node
-	return t.IsAgentRunning(session, []string{"node"})
+	return cmd == "node"
 }
 
 // WaitForCommand polls until the pane is NOT running one of the excluded commands.

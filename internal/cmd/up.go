@@ -79,24 +79,20 @@ func runUp(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Get session names
-	deaconSession := getDeaconSessionName()
-	mayorSession := getMayorSessionName()
-
 	// 2. Deacon (Claude agent)
-	if err := ensureSession(t, deaconSession, townRoot, "deacon"); err != nil {
+	if err := ensureSession(t, DeaconSessionName, townRoot, "deacon"); err != nil {
 		printStatus("Deacon", false, err.Error())
 		allOK = false
 	} else {
-		printStatus("Deacon", true, deaconSession)
+		printStatus("Deacon", true, "gt-deacon")
 	}
 
 	// 3. Mayor (Claude agent)
-	if err := ensureSession(t, mayorSession, townRoot, "mayor"); err != nil {
+	if err := ensureSession(t, MayorSessionName, townRoot, "mayor"); err != nil {
 		printStatus("Mayor", false, err.Error())
 		allOK = false
 	} else {
-		printStatus("Mayor", true, mayorSession)
+		printStatus("Mayor", true, "gt-mayor")
 	}
 
 	// 4. Witnesses (one per rig)

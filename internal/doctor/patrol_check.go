@@ -115,7 +115,7 @@ func (c *PatrolMoleculesExistCheck) Fix(ctx *CheckContext) error {
 		rigPath := filepath.Join(ctx.TownRoot, rigName)
 		for _, mol := range missing {
 			desc := getPatrolMoleculeDesc(mol)
-			cmd := exec.Command("bd", "create", //nolint:gosec // G204: args are constructed internally
+			cmd := exec.Command("bd", "create",
 				"--type=molecule",
 				"--title="+mol,
 				"--description="+desc,
@@ -145,36 +145,34 @@ func getPatrolMoleculeDesc(title string) string {
 
 // PatrolHooksWiredCheck verifies that hooks trigger patrol execution.
 type PatrolHooksWiredCheck struct {
-	FixableCheck
+	BaseCheck
 }
 
 // NewPatrolHooksWiredCheck creates a new patrol hooks wired check.
 func NewPatrolHooksWiredCheck() *PatrolHooksWiredCheck {
 	return &PatrolHooksWiredCheck{
-		FixableCheck: FixableCheck{
-			BaseCheck: BaseCheck{
-				CheckName:        "patrol-hooks-wired",
-				CheckDescription: "Check if hooks trigger patrol execution",
-			},
+		BaseCheck: BaseCheck{
+			CheckName:        "patrol-hooks-wired",
+			CheckDescription: "Check if hooks trigger patrol execution",
 		},
 	}
 }
 
 // Run checks if patrol hooks are wired.
 func (c *PatrolHooksWiredCheck) Run(ctx *CheckContext) *CheckResult {
-	daemonConfigPath := config.DaemonPatrolConfigPath(ctx.TownRoot)
-	relPath, _ := filepath.Rel(ctx.TownRoot, daemonConfigPath)
-
+	// Check for daemon config which manages patrols
+	daemonConfigPath := filepath.Join(ctx.TownRoot, "mayor", "daemon.json")
 	if _, err := os.Stat(daemonConfigPath); os.IsNotExist(err) {
 		return &CheckResult{
 			Name:    c.Name(),
 			Status:  StatusWarning,
-			Message: fmt.Sprintf("%s not found", relPath),
-			FixHint: "Run 'gt doctor --fix' to create default config, or 'gt daemon start' to start the daemon",
+			Message: "Daemon config not found",
+			FixHint: "Run 'gt daemon init' to configure daemon",
 		}
 	}
 
-	cfg, err := config.LoadDaemonPatrolConfig(daemonConfigPath)
+	// Check daemon config for patrol configuration
+	data, err := os.ReadFile(daemonConfigPath)
 	if err != nil {
 		return &CheckResult{
 			Name:    c.Name(),
@@ -184,33 +182,46 @@ func (c *PatrolHooksWiredCheck) Run(ctx *CheckContext) *CheckResult {
 		}
 	}
 
-	if len(cfg.Patrols) > 0 {
+	var config map[string]interface{}
+	if err := json.Unmarshal(data, &config); err != nil {
 		return &CheckResult{
 			Name:    c.Name(),
-			Status:  StatusOK,
-			Message: fmt.Sprintf("Daemon configured with %d patrol(s)", len(cfg.Patrols)),
+			Status:  StatusWarning,
+			Message: "Invalid daemon config format",
+			Details: []string{err.Error()},
 		}
 	}
 
-	if cfg.Heartbeat != nil && cfg.Heartbeat.Enabled {
-		return &CheckResult{
-			Name:    c.Name(),
-			Status:  StatusOK,
-			Message: "Daemon heartbeat enabled (triggers patrols)",
+	// Check for patrol entries
+	if patrols, ok := config["patrols"]; ok {
+		if patrolMap, ok := patrols.(map[string]interface{}); ok && len(patrolMap) > 0 {
+			return &CheckResult{
+				Name:    c.Name(),
+				Status:  StatusOK,
+				Message: fmt.Sprintf("Daemon configured with %d patrol(s)", len(patrolMap)),
+			}
+		}
+	}
+
+	// Check if heartbeat is enabled (triggers deacon patrol)
+	if heartbeat, ok := config["heartbeat"]; ok {
+		if hb, ok := heartbeat.(map[string]interface{}); ok {
+			if enabled, ok := hb["enabled"].(bool); ok && enabled {
+				return &CheckResult{
+					Name:    c.Name(),
+					Status:  StatusOK,
+					Message: "Daemon heartbeat enabled (triggers patrols)",
+				}
+			}
 		}
 	}
 
 	return &CheckResult{
 		Name:    c.Name(),
 		Status:  StatusWarning,
-		Message: fmt.Sprintf("Configure patrols in %s or run 'gt daemon start'", relPath),
-		FixHint: "Run 'gt doctor --fix' to create default config",
+		Message: "Patrol hooks not configured in daemon",
+		FixHint: "Configure patrols in mayor/daemon.json or run 'gt daemon init'",
 	}
-}
-
-// Fix creates the daemon patrol config with defaults.
-func (c *PatrolHooksWiredCheck) Fix(ctx *CheckContext) error {
-	return config.EnsureDaemonPatrolConfig(ctx.TownRoot)
 }
 
 // PatrolNotStuckCheck detects wisps that have been in_progress too long.

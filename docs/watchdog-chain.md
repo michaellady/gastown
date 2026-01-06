@@ -66,10 +66,10 @@ The daemon could directly monitor agents without AI, but:
 | Agent | Session Name | Location | Lifecycle |
 |-------|--------------|----------|-----------|
 | Daemon | (Go process) | `~/gt/daemon/` | Persistent, auto-restart |
-| Boot | `gt-boot` | `~/gt/deacon/dogs/boot/` | Ephemeral, fresh each tick |
-| Deacon | `hq-deacon` | `~/gt/deacon/` | Long-running, handoff loop |
+| Boot | `gt-deacon-boot` | `~/gt/deacon/dogs/boot/` | Ephemeral, fresh each tick |
+| Deacon | `gt-deacon` | `~/gt/deacon/` | Long-running, handoff loop |
 
-**Critical**: Boot runs in `gt-boot`, NOT `hq-deacon`. This prevents Boot
+**Critical**: Boot runs in `gt-deacon-boot`, NOT `gt-deacon`. This prevents Boot
 from conflicting with a running Deacon session.
 
 ## Heartbeat Mechanics
@@ -227,15 +227,15 @@ gt deacon health-check
 
 ### Boot Spawns in Wrong Session
 
-**Symptom**: Boot runs in `hq-deacon` instead of `gt-boot`
+**Symptom**: Boot runs in `gt-deacon` instead of `gt-deacon-boot`
 **Cause**: Session name confusion in spawn code
-**Fix**: Ensure `gt boot triage` specifies `--session=gt-boot`
+**Fix**: Ensure `gt boot triage` specifies `--session=gt-deacon-boot`
 
 ### Zombie Sessions Block Restart
 
 **Symptom**: tmux session exists but Claude is dead
 **Cause**: Daemon checks session existence, not process health
-**Fix**: Kill zombie sessions before recreating: `gt session kill hq-deacon`
+**Fix**: Kill zombie sessions before recreating: `gt session kill gt-deacon`
 
 ### Status Shows Wrong State
 
@@ -250,15 +250,15 @@ The issue [gt-1847v] considered three options:
 ### Option A: Keep Boot/Deacon Separation (CHOSEN)
 
 - Boot is ephemeral, spawns fresh each heartbeat
-- Boot runs in `gt-boot`, exits after triage
-- Deacon runs in `hq-deacon`, continuous patrol
+- Boot runs in `gt-deacon-boot`, exits after triage
+- Deacon runs in `gt-deacon`, continuous patrol
 - Clear session boundaries, clear lifecycle
 
 **Verdict**: This is the correct design. The implementation needs fixing, not the architecture.
 
 ### Option B: Merge Boot into Deacon (Rejected)
 
-- Single `hq-deacon` session handles everything
+- Single `gt-deacon` session handles everything
 - Deacon checks "should I be awake?" internally
 
 **Why rejected**:

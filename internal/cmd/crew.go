@@ -12,7 +12,6 @@ var (
 	crewBranch   bool
 	crewJSON     bool
 	crewForce    bool
-	crewPurge    bool
 	crewNoTmux   bool
 	crewDetached bool
 	crewMessage  string
@@ -118,22 +117,11 @@ var crewRemoveCmd = &cobra.Command{
 Checks for uncommitted changes and running sessions before removing.
 Use --force to skip checks and remove anyway.
 
-The agent bead is CLOSED by default (preserves CV history). Use --purge
-to DELETE the agent bead entirely (for accidental/test crew that should
-leave no trace in the ledger).
-
---purge also:
-  - Deletes the agent bead (not just closes it)
-  - Unassigns any beads assigned to this crew member
-  - Clears mail in the agent's inbox
-  - Properly handles git worktrees (not just regular clones)
-
 Examples:
   gt crew remove dave                       # Remove with safety checks
   gt crew remove dave emma fred             # Remove multiple
   gt crew remove beads/grip beads/fang      # Remove from specific rig
-  gt crew remove dave --force               # Force remove (closes bead)
-  gt crew remove test-crew --purge          # Obliterate (deletes bead)`,
+  gt crew remove dave --force               # Force remove`,
 	Args: cobra.MinimumNArgs(1),
 	RunE: runCrewRemove,
 }
@@ -252,29 +240,28 @@ var crewPrevCmd = &cobra.Command{
 }
 
 var crewStartCmd = &cobra.Command{
-	Use:     "start [rig] [name...]",
+	Use:     "start <rig> [name]",
 	Aliases: []string{"spawn"},
 	Short:   "Start crew worker(s) in a rig",
 	Long: `Start crew workers in a rig, creating workspaces if they don't exist.
 
-The rig name can be provided as the first argument, or inferred from the
-current directory. If no crew names are specified, starts all crew in the rig.
+Takes the rig name as the first argument. Optionally specify a crew member name
+to start just that worker, or use --all to start all crew members in the rig.
 
 The crew session starts in the background with Claude running and ready.
 
 Examples:
-  gt crew start beads             # Start all crew in beads rig
-  gt crew start                   # Start all crew (rig inferred from cwd)
-  gt crew start beads grip fang   # Start specific crew in beads rig
-  gt crew start gastown joe       # Start joe in gastown rig`,
+  gt crew start gastown joe       # Start joe in gastown rig
+  gt crew start gastown --all     # Start all crew in gastown rig
+  gt crew start beads             # Error: specify name or --all
+  gt crew start beads grip fang   # Start grip and fang in beads rig`,
 	Args: func(cmd *cobra.Command, args []string) error {
-		// With --all, we can have 0 args (infer rig) or 1+ args (rig specified)
-		if crewAll {
-			return nil
+		if len(args) < 1 {
+			return fmt.Errorf("requires at least 1 argument: the rig name")
 		}
-		// Allow: 0 args (infer rig, default to --all)
-		//        1 arg  (rig specified, default to --all)
-		//        2+ args (rig + specific crew names)
+		if len(args) == 1 && !crewAll {
+			return fmt.Errorf("specify a crew member name or use --all to start all crew in the rig")
+		}
 		return nil
 	},
 	RunE: runCrewStart,
@@ -285,8 +272,8 @@ var crewStopCmd = &cobra.Command{
 	Short: "Stop crew workspace session(s)",
 	Long: `Stop one or more running crew workspace sessions.
 
-If a rig name is given alone, stops all crew in that rig. Otherwise stops
-the specified crew member(s).
+Kills the tmux session(s) for the specified crew member(s). Use --all to
+stop all running crew sessions across all rigs.
 
 The name can include the rig in slash format (e.g., beads/emma).
 If not specified, the rig is inferred from the current directory.
@@ -295,11 +282,11 @@ Output is captured before stopping for debugging purposes (use --force
 to skip capture for faster shutdown).
 
 Examples:
-  gt crew stop beads                        # Stop all crew in beads rig
-  gt crew stop                              # Stop all crew (rig inferred from cwd)
-  gt crew stop beads/emma                   # Stop specific crew member
-  gt crew stop dave                         # Stop dave in current rig
+  gt crew stop dave                         # Stop dave's session
+  gt crew stop beads/emma beads/grip        # Stop multiple from specific rig
   gt crew stop --all                        # Stop all running crew sessions
+  gt crew stop --all --rig beads            # Stop all crew in beads rig
+  gt crew stop --all --dry-run              # Preview what would be stopped
   gt crew stop dave --force                 # Stop without capturing output`,
 	Args: func(cmd *cobra.Command, args []string) error {
 		if crewAll {
@@ -308,9 +295,9 @@ Examples:
 			}
 			return nil
 		}
-		// Allow: 0 args (infer rig, default to --all)
-		//        1 arg  (rig name → all in that rig, or crew name → specific crew)
-		//        1+ args (specific crew names)
+		if len(args) < 1 {
+			return fmt.Errorf("requires at least 1 argument (or --all)")
+		}
 		return nil
 	},
 	RunE: runCrewStop,
@@ -331,7 +318,6 @@ func init() {
 
 	crewRemoveCmd.Flags().StringVar(&crewRig, "rig", "", "Rig to use")
 	crewRemoveCmd.Flags().BoolVar(&crewForce, "force", false, "Force remove (skip safety checks)")
-	crewRemoveCmd.Flags().BoolVar(&crewPurge, "purge", false, "Obliterate: delete agent bead, unassign work, clear mail")
 
 	crewRefreshCmd.Flags().StringVar(&crewRig, "rig", "", "Rig to use")
 	crewRefreshCmd.Flags().StringVarP(&crewMessage, "message", "m", "", "Custom handoff message")

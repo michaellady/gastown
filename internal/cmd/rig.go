@@ -177,11 +177,9 @@ Examples:
 }
 
 var rigStatusCmd = &cobra.Command{
-	Use:   "status [rig]",
+	Use:   "status <rig>",
 	Short: "Show detailed status for a specific rig",
 	Long: `Show detailed status for a specific rig including all workers.
-
-If no rig is specified, infers the rig from the current directory.
 
 Displays:
 - Rig information (name, path, beads prefix)
@@ -191,10 +189,9 @@ Displays:
 - Crew members (name, branch, session status, git status)
 
 Examples:
-  gt rig status           # Infer rig from current directory
   gt rig status gastown
   gt rig status beads`,
-	Args: cobra.MaximumNArgs(1),
+	Args: cobra.ExactArgs(1),
 	RunE: runRigStatus,
 }
 
@@ -254,8 +251,6 @@ Examples:
 // Flags
 var (
 	rigAddPrefix       string
-	rigAddLocalRepo    string
-	rigAddBranch       string
 	rigResetHandoff    bool
 	rigResetMail       bool
 	rigResetStale      bool
@@ -284,8 +279,6 @@ func init() {
 	rigCmd.AddCommand(rigStopCmd)
 
 	rigAddCmd.Flags().StringVar(&rigAddPrefix, "prefix", "", "Beads issue prefix (default: derived from name)")
-	rigAddCmd.Flags().StringVar(&rigAddLocalRepo, "local-repo", "", "Local repo path to share git objects (optional)")
-	rigAddCmd.Flags().StringVar(&rigAddBranch, "branch", "", "Default branch name (default: auto-detected from remote)")
 
 	rigResetCmd.Flags().BoolVar(&rigResetHandoff, "handoff", false, "Clear handoff content")
 	rigResetCmd.Flags().BoolVar(&rigResetMail, "mail", false, "Clear stale mail messages")
@@ -337,19 +330,14 @@ func runRigAdd(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Creating rig %s...\n", style.Bold.Render(name))
 	fmt.Printf("  Repository: %s\n", gitURL)
-	if rigAddLocalRepo != "" {
-		fmt.Printf("  Local repo: %s\n", rigAddLocalRepo)
-	}
 
 	startTime := time.Now()
 
 	// Add the rig
 	newRig, err := mgr.AddRig(rig.AddRigOptions{
-		Name:          name,
-		GitURL:        gitURL,
-		BeadsPrefix:   rigAddPrefix,
-		LocalRepo:     rigAddLocalRepo,
-		DefaultBranch: rigAddBranch,
+		Name:        name,
+		GitURL:      gitURL,
+		BeadsPrefix: rigAddPrefix,
 	})
 	if err != nil {
 		return fmt.Errorf("adding rig: %w", err)
@@ -405,8 +393,8 @@ func runRigAdd(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  └── polecats/\n")
 
 	fmt.Printf("\nNext steps:\n")
-	fmt.Printf("  gt crew add <name> --rig %s   # Create your personal workspace\n", name)
-	fmt.Printf("  cd %s/crew/<name>              # Start working\n", filepath.Join(townRoot, name))
+	fmt.Printf("  gt crew add <name> --rig %s   # Create your workspace\n", name)
+	fmt.Printf("  cd %s/crew/<name>       # Work in your clone\n", filepath.Join(townRoot, name))
 
 	return nil
 }
@@ -999,21 +987,7 @@ func runRigReboot(cmd *cobra.Command, args []string) error {
 }
 
 func runRigStatus(cmd *cobra.Command, args []string) error {
-	var rigName string
-
-	if len(args) > 0 {
-		rigName = args[0]
-	} else {
-		// Infer rig from current directory
-		roleInfo, err := GetRole()
-		if err != nil {
-			return fmt.Errorf("detecting rig from current directory: %w", err)
-		}
-		if roleInfo.Rig == "" {
-			return fmt.Errorf("could not detect rig from current directory; please specify rig name")
-		}
-		rigName = roleInfo.Rig
-	}
+	rigName := args[0]
 
 	// Get rig
 	townRoot, r, err := getRig(rigName)

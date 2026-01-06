@@ -3,6 +3,7 @@ package daemon
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -11,8 +12,6 @@ import (
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
-	"github.com/steveyegge/gastown/internal/rig"
-	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/tmux"
 )
 
@@ -160,6 +159,11 @@ func (d *Daemon) executeLifecycleAction(request *LifecycleRequest) error {
 
 	d.logger.Printf("Executing %s for session %s", request.Action, sessionName)
 
+	// Verify agent state shows requesting_<action>=true before killing
+	if err := d.verifyAgentRequestingState(request.From, request.Action); err != nil {
+		return fmt.Errorf("state verification failed: %w", err)
+	}
+
 	// Check agent bead state (ZFC: trust what agent reports) - gt-39ttg
 	agentBeadID := d.identityToAgentBeadID(request.From)
 	if agentBeadID != "" {
@@ -201,6 +205,11 @@ func (d *Daemon) executeLifecycleAction(request *LifecycleRequest) error {
 			return fmt.Errorf("restarting session: %w", err)
 		}
 		d.logger.Printf("Restarted session %s", sessionName)
+
+		// Clear the requesting state so we don't cycle again
+		if err := d.clearAgentRequestingState(request.From, request.Action); err != nil {
+			d.logger.Printf("Warning: failed to clear agent state: %v", err)
+		}
 		return nil
 
 	default:
@@ -301,10 +310,8 @@ func (d *Daemon) identityToSession(identity string) string {
 
 	// Fallback: use default patterns based on role type
 	switch parsed.RoleType {
-	case "mayor":
-		return session.MayorSessionName()
-	case "deacon":
-		return session.DeaconSessionName()
+	case "mayor", "deacon":
+		return "gt-" + parsed.RoleType
 	case "witness", "refinery":
 		return fmt.Sprintf("gt-%s-%s", parsed.RigName, parsed.RoleType)
 	case "crew":
@@ -364,21 +371,9 @@ func (d *Daemon) restartSession(sessionName, identity string) error {
 		// Non-fatal - Claude might still start
 	}
 	_ = d.tmux.AcceptBypassPermissionsWarning(sessionName)
-	time.Sleep(constants.ShutdownNotifyDelay)
 
-	// GUPP: Gas Town Universal Propulsion Principle
-	// Send startup nudge for predecessor discovery via /resume
-	recipient := identityToBDActor(identity)
-	_ = session.StartupNudge(d.tmux, sessionName, session.StartupNudgeConfig{
-		Recipient: recipient,
-		Sender:    "deacon",
-		Topic:     "lifecycle-restart",
-	}) // Non-fatal
-
-	// Send propulsion nudge to trigger autonomous execution.
-	// Wait for beacon to be fully processed (needs to be separate prompt)
-	time.Sleep(2 * time.Second)
-	_ = d.tmux.NudgeSession(sessionName, session.PropulsionNudgeForRole(parsed.RoleType, workDir)) // Non-fatal
+	// Note: gt prime is handled by Claude's SessionStart hook, not injected here.
+	// Injecting it via SendKeysDelayed causes rogue text to appear in the terminal.
 
 	return nil
 }
@@ -480,20 +475,6 @@ func (d *Daemon) applySessionTheme(sessionName string, parsed *ParsedIdentity) {
 // syncWorkspace syncs a git workspace before starting a new session.
 // This ensures agents with persistent clones (like refinery) start with current code.
 func (d *Daemon) syncWorkspace(workDir string) {
-	// Determine default branch from rig config
-	// workDir is like <townRoot>/<rigName>/<role>/rig or <townRoot>/<rigName>/crew/<name>
-	defaultBranch := "main" // fallback
-	rel, err := filepath.Rel(d.config.TownRoot, workDir)
-	if err == nil {
-		parts := strings.Split(rel, string(filepath.Separator))
-		if len(parts) > 0 {
-			rigPath := filepath.Join(d.config.TownRoot, parts[0])
-			if rigCfg, err := rig.LoadRigConfig(rigPath); err == nil && rigCfg.DefaultBranch != "" {
-				defaultBranch = rigCfg.DefaultBranch
-			}
-		}
-	}
-
 	// Fetch latest from origin
 	fetchCmd := exec.Command("git", "fetch", "origin")
 	fetchCmd.Dir = workDir
@@ -502,7 +483,7 @@ func (d *Daemon) syncWorkspace(workDir string) {
 	}
 
 	// Pull with rebase to incorporate changes
-	pullCmd := exec.Command("git", "pull", "--rebase", "origin", defaultBranch)
+	pullCmd := exec.Command("git", "pull", "--rebase", "origin", "main")
 	pullCmd.Dir = workDir
 	if err := pullCmd.Run(); err != nil {
 		d.logger.Printf("Warning: git pull failed in %s: %v", workDir, err)
@@ -531,6 +512,115 @@ func (d *Daemon) closeMessage(id string) error {
 	}
 	d.logger.Printf("Deleted lifecycle message: %s", id)
 	return nil
+}
+
+// verifyAgentRequestingState verifies that the agent has set requesting_<action>=true
+// in its state.json before we kill its session. This ensures the agent is actually
+// ready to be killed and has completed its pre-shutdown tasks (git clean, handoff mail, etc).
+func (d *Daemon) verifyAgentRequestingState(identity string, action LifecycleAction) error {
+	stateFile := d.identityToStateFile(identity)
+	if stateFile == "" {
+		// If we can't determine state file, log warning but allow action
+		// This maintains backwards compatibility with agents that don't support state files yet
+		d.logger.Printf("Warning: cannot determine state file for %s, skipping verification", identity)
+		return nil
+	}
+
+	data, err := os.ReadFile(stateFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("agent state file not found: %s (agent must set requesting_%s=true before lifecycle request)", stateFile, action)
+		}
+		return fmt.Errorf("reading agent state: %w", err)
+	}
+
+	var state map[string]interface{}
+	if err := json.Unmarshal(data, &state); err != nil {
+		return fmt.Errorf("parsing agent state: %w", err)
+	}
+
+	// Check for requesting_<action>=true
+	key := "requesting_" + string(action)
+	val, ok := state[key]
+	if !ok {
+		return fmt.Errorf("agent state missing %s field (agent must set this before lifecycle request)", key)
+	}
+
+	requesting, ok := val.(bool)
+	if !ok || !requesting {
+		return fmt.Errorf("agent state %s is not true (got: %v)", key, val)
+	}
+
+	d.logger.Printf("Verified agent %s has %s=true", identity, key)
+	return nil
+}
+
+// clearAgentRequestingState clears the requesting_<action>=true flag after
+// successfully completing a lifecycle action. This prevents the daemon from
+// repeatedly cycling the same session.
+func (d *Daemon) clearAgentRequestingState(identity string, action LifecycleAction) error {
+	stateFile := d.identityToStateFile(identity)
+	if stateFile == "" {
+		return fmt.Errorf("cannot determine state file for %s", identity)
+	}
+
+	data, err := os.ReadFile(stateFile)
+	if err != nil {
+		return fmt.Errorf("reading state file: %w", err)
+	}
+
+	var state map[string]interface{}
+	if err := json.Unmarshal(data, &state); err != nil {
+		return fmt.Errorf("parsing state: %w", err)
+	}
+
+	// Remove the requesting_<action> key
+	key := "requesting_" + string(action)
+	delete(state, key)
+	delete(state, "requesting_time") // Also clean up the timestamp
+
+	// Write back
+	newData, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshaling state: %w", err)
+	}
+
+	if err := os.WriteFile(stateFile, newData, 0644); err != nil {
+		return fmt.Errorf("writing state file: %w", err)
+	}
+
+	d.logger.Printf("Cleared %s from agent %s state", key, identity)
+	return nil
+}
+
+// identityToStateFile maps an agent identity to its state.json file path.
+// Uses parseIdentity to extract components, then derives state file location.
+func (d *Daemon) identityToStateFile(identity string) string {
+	parsed, err := parseIdentity(identity)
+	if err != nil {
+		return ""
+	}
+
+	// Derive state file path based on working directory
+	workDir := d.getWorkDir(nil, parsed) // Use defaults, not role bead config
+	if workDir == "" {
+		return ""
+	}
+
+	// For mayor and deacon, state file is in a subdirectory
+	switch parsed.RoleType {
+	case "mayor":
+		return filepath.Join(d.config.TownRoot, "mayor", "state.json")
+	case "deacon":
+		return filepath.Join(d.config.TownRoot, "deacon", "state.json")
+	case "witness":
+		return filepath.Join(d.config.TownRoot, parsed.RigName, "witness", "state.json")
+	case "refinery":
+		return filepath.Join(d.config.TownRoot, parsed.RigName, "refinery", "state.json")
+	default:
+		// For crew and polecat, state file is in their working directory
+		return filepath.Join(workDir, "state.json")
+	}
 }
 
 // AgentBeadInfo represents the parsed fields from an agent bead.
@@ -622,21 +712,17 @@ func (d *Daemon) identityToAgentBeadID(identity string) string {
 
 	switch parsed.RoleType {
 	case "deacon":
-		return beads.DeaconBeadIDTown()
+		return beads.DeaconBeadID()
 	case "mayor":
-		return beads.MayorBeadIDTown()
+		return beads.MayorBeadID()
 	case "witness":
-		prefix := config.GetRigPrefix(d.config.TownRoot, parsed.RigName)
-		return beads.WitnessBeadIDWithPrefix(prefix, parsed.RigName)
+		return beads.WitnessBeadID(parsed.RigName)
 	case "refinery":
-		prefix := config.GetRigPrefix(d.config.TownRoot, parsed.RigName)
-		return beads.RefineryBeadIDWithPrefix(prefix, parsed.RigName)
+		return beads.RefineryBeadID(parsed.RigName)
 	case "crew":
-		prefix := config.GetRigPrefix(d.config.TownRoot, parsed.RigName)
-		return beads.CrewBeadIDWithPrefix(prefix, parsed.RigName, parsed.AgentName)
+		return beads.CrewBeadID(parsed.RigName, parsed.AgentName)
 	case "polecat":
-		prefix := config.GetRigPrefix(d.config.TownRoot, parsed.RigName)
-		return beads.PolecatBeadIDWithPrefix(prefix, parsed.RigName, parsed.AgentName)
+		return beads.PolecatBeadID(parsed.RigName, parsed.AgentName)
 	default:
 		return ""
 	}
@@ -652,8 +738,8 @@ const DeadAgentTimeout = 15 * time.Minute
 func (d *Daemon) checkStaleAgents() {
 	// Known agent bead IDs to check
 	agentBeadIDs := []string{
-		beads.DeaconBeadIDTown(),
-		beads.MayorBeadIDTown(),
+		beads.DeaconBeadID(),
+		beads.MayorBeadID(),
 	}
 
 	// Dynamically discover rigs from the rigs config
@@ -664,14 +750,9 @@ func (d *Daemon) checkStaleAgents() {
 		d.logger.Printf("Warning: could not load rigs config: %v", err)
 	} else {
 		// Add rig-specific agents (witness, refinery) for each discovered rig
-		for rigName, rigEntry := range rigsConfig.Rigs {
-			// Get rig prefix from config (defaults to "gt" if not set)
-			prefix := "gt"
-			if rigEntry.BeadsConfig != nil && rigEntry.BeadsConfig.Prefix != "" {
-				prefix = strings.TrimSuffix(rigEntry.BeadsConfig.Prefix, "-")
-			}
-			agentBeadIDs = append(agentBeadIDs, beads.WitnessBeadIDWithPrefix(prefix, rigName))
-			agentBeadIDs = append(agentBeadIDs, beads.RefineryBeadIDWithPrefix(prefix, rigName))
+		for rigName := range rigsConfig.Rigs {
+			agentBeadIDs = append(agentBeadIDs, beads.WitnessBeadID(rigName))
+			agentBeadIDs = append(agentBeadIDs, beads.RefineryBeadID(rigName))
 		}
 	}
 

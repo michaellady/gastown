@@ -25,6 +25,8 @@ const (
 	AgentCursor AgentPreset = "cursor"
 	// AgentAuggie is Auggie CLI.
 	AgentAuggie AgentPreset = "auggie"
+	// AgentAmp is Sourcegraph AMP CLI.
+	AgentAmp AgentPreset = "amp"
 )
 
 // AgentPresetInfo contains the configuration details for an agent preset.
@@ -163,6 +165,20 @@ var builtinPresets = map[AgentPreset]*AgentPresetInfo{
 		ResumeStyle:         "flag",
 		SupportsHooks:       false,
 		SupportsForkSession: false,
+	},
+	AgentAmp: {
+		Name:                AgentAmp,
+		Command:             "amp",
+		Args:                []string{"--dangerously-allow-all", "--no-ide"},
+		ProcessNames:        []string{"amp"},
+		SessionIDEnv:        "",
+		ResumeFlag:          "threads continue",
+		ResumeStyle:         "subcommand",
+		SupportsHooks:       false,
+		SupportsForkSession: false,
+		NonInteractive: &NonInteractiveConfig{
+			OutputFlag: "--stream-json",
+		},
 	},
 }
 

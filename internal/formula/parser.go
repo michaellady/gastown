@@ -9,7 +9,7 @@ import (
 
 // ParseFile reads and parses a formula.toml file.
 func ParseFile(path string) (*Formula, error) {
-	data, err := os.ReadFile(path) //nolint:gosec // G304: path is from trusted formula directory
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("reading formula file: %w", err)
 	}

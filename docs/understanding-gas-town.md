@@ -37,7 +37,7 @@ These roles do actual project work:
 
 | Role | Description | Lifecycle |
 |------|-------------|-----------|
-| **Polecat** | Ephemeral worker with own worktree | Transient, Witness-managed ([details](polecat-lifecycle.md)) |
+| **Polecat** | Ephemeral worker with own worktree | Transient, Witness-managed |
 | **Crew** | Persistent worker with own clone | Long-lived, user-managed |
 | **Dog** | Deacon helper for infrastructure tasks | Ephemeral, Deacon-managed |
 

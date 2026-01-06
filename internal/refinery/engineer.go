@@ -16,9 +16,7 @@ import (
 
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/git"
-	"github.com/steveyegge/gastown/internal/mail"
 	"github.com/steveyegge/gastown/internal/mrqueue"
-	"github.com/steveyegge/gastown/internal/protocol"
 	"github.com/steveyegge/gastown/internal/rig"
 )
 
@@ -82,7 +80,6 @@ type Engineer struct {
 	workDir     string
 	output      io.Writer // Output destination for user-facing messages
 	eventLogger *mrqueue.EventLogger
-	router      *mail.Router // Mail router for sending protocol messages
 
 	// stopCh is used for graceful shutdown
 	stopCh chan struct{}
@@ -90,20 +87,15 @@ type Engineer struct {
 
 // NewEngineer creates a new Engineer for the given rig.
 func NewEngineer(r *rig.Rig) *Engineer {
-	cfg := DefaultMergeQueueConfig()
-	// Override target branch with rig's configured default branch
-	cfg.TargetBranch = r.DefaultBranch()
-
 	return &Engineer{
 		rig:         r,
 		beads:       beads.New(r.Path),
 		mrQueue:     mrqueue.New(r.Path),
 		git:         git.NewGit(r.Path),
-		config:      cfg,
+		config:      DefaultMergeQueueConfig(),
 		workDir:     r.Path,
 		output:      os.Stdout,
 		eventLogger: mrqueue.NewEventLoggerFromRig(r.Path),
-		router:      mail.NewRouter(r.Path),
 		stopCh:      make(chan struct{}),
 	}
 }
@@ -223,10 +215,10 @@ func (e *Engineer) ProcessMR(ctx context.Context, mr *beads.Issue) ProcessResult
 	}
 
 	// Log what we're processing
-	_, _ = fmt.Fprintln(e.output, "[Engineer] Processing MR:")
-	_, _ = fmt.Fprintf(e.output, "  Branch: %s\n", mrFields.Branch)
-	_, _ = fmt.Fprintf(e.output, "  Target: %s\n", mrFields.Target)
-	_, _ = fmt.Fprintf(e.output, "  Worker: %s\n", mrFields.Worker)
+	fmt.Fprintln(e.output, "[Engineer] Processing MR:")
+	fmt.Fprintf(e.output, "  Branch: %s\n", mrFields.Branch)
+	fmt.Fprintf(e.output, "  Target: %s\n", mrFields.Target)
+	fmt.Fprintf(e.output, "  Worker: %s\n", mrFields.Worker)
 
 	return e.doMerge(ctx, mrFields.Branch, mrFields.Target, mrFields.SourceIssue)
 }
@@ -234,24 +226,17 @@ func (e *Engineer) ProcessMR(ctx context.Context, mr *beads.Issue) ProcessResult
 // doMerge performs the actual git merge operation.
 // This is the core merge logic shared by ProcessMR and ProcessMRFromQueue.
 func (e *Engineer) doMerge(ctx context.Context, branch, target, sourceIssue string) ProcessResult {
-	// Step 1: Verify source branch exists locally (shared .repo.git with polecats)
-	_, _ = fmt.Fprintf(e.output, "[Engineer] Checking local branch %s...\n", branch)
-	exists, err := e.git.BranchExists(branch)
-	if err != nil {
+	// Step 1: Fetch the source branch from origin
+	fmt.Fprintf(e.output, "[Engineer] Fetching branch %s from origin...\n", branch)
+	if err := e.git.FetchBranch("origin", branch); err != nil {
 		return ProcessResult{
 			Success: false,
-			Error:   fmt.Sprintf("failed to check branch %s: %v", branch, err),
-		}
-	}
-	if !exists {
-		return ProcessResult{
-			Success: false,
-			Error:   fmt.Sprintf("branch %s not found locally", branch),
+			Error:   fmt.Sprintf("failed to fetch branch %s: %v", branch, err),
 		}
 	}
 
 	// Step 2: Checkout the target branch
-	_, _ = fmt.Fprintf(e.output, "[Engineer] Checking out target branch %s...\n", target)
+	fmt.Fprintf(e.output, "[Engineer] Checking out target branch %s...\n", target)
 	if err := e.git.Checkout(target); err != nil {
 		return ProcessResult{
 			Success: false,
@@ -262,12 +247,13 @@ func (e *Engineer) doMerge(ctx context.Context, branch, target, sourceIssue stri
 	// Make sure target is up to date with origin
 	if err := e.git.Pull("origin", target); err != nil {
 		// Pull might fail if nothing to pull, that's ok
-		_, _ = fmt.Fprintf(e.output, "[Engineer] Warning: pull from origin/%s: %v (continuing)\n", target, err)
+		fmt.Fprintf(e.output, "[Engineer] Warning: pull from origin/%s: %v (continuing)\n", target, err)
 	}
 
-	// Step 3: Check for merge conflicts (using local branch)
-	_, _ = fmt.Fprintf(e.output, "[Engineer] Checking for conflicts...\n")
-	conflicts, err := e.git.CheckConflicts(branch, target)
+	// Step 3: Check for merge conflicts
+	fmt.Fprintf(e.output, "[Engineer] Checking for conflicts...\n")
+	remoteBranch := "origin/" + branch
+	conflicts, err := e.git.CheckConflicts(remoteBranch, target)
 	if err != nil {
 		return ProcessResult{
 			Success:  false,
@@ -285,7 +271,7 @@ func (e *Engineer) doMerge(ctx context.Context, branch, target, sourceIssue stri
 
 	// Step 4: Run tests if configured
 	if e.config.RunTests && e.config.TestCommand != "" {
-		_, _ = fmt.Fprintf(e.output, "[Engineer] Running tests: %s\n", e.config.TestCommand)
+		fmt.Fprintf(e.output, "[Engineer] Running tests: %s\n", e.config.TestCommand)
 		result := e.runTests(ctx)
 		if !result.Success {
 			return ProcessResult{
@@ -294,7 +280,7 @@ func (e *Engineer) doMerge(ctx context.Context, branch, target, sourceIssue stri
 				Error:       result.Error,
 			}
 		}
-		_, _ = fmt.Fprintln(e.output, "[Engineer] Tests passed")
+		fmt.Fprintln(e.output, "[Engineer] Tests passed")
 	}
 
 	// Step 5: Perform the actual merge
@@ -302,8 +288,8 @@ func (e *Engineer) doMerge(ctx context.Context, branch, target, sourceIssue stri
 	if sourceIssue != "" {
 		mergeMsg = fmt.Sprintf("Merge %s into %s (%s)", branch, target, sourceIssue)
 	}
-	_, _ = fmt.Fprintf(e.output, "[Engineer] Merging with message: %s\n", mergeMsg)
-	if err := e.git.MergeNoFF(branch, mergeMsg); err != nil {
+	fmt.Fprintf(e.output, "[Engineer] Merging with message: %s\n", mergeMsg)
+	if err := e.git.MergeNoFF(remoteBranch, mergeMsg); err != nil {
 		if errors.Is(err, git.ErrMergeConflict) {
 			_ = e.git.AbortMerge()
 			return ProcessResult{
@@ -328,7 +314,7 @@ func (e *Engineer) doMerge(ctx context.Context, branch, target, sourceIssue stri
 	}
 
 	// Step 7: Push to origin
-	_, _ = fmt.Fprintf(e.output, "[Engineer] Pushing to origin/%s...\n", target)
+	fmt.Fprintf(e.output, "[Engineer] Pushing to origin/%s...\n", target)
 	if err := e.git.Push("origin", target, false); err != nil {
 		return ProcessResult{
 			Success: false,
@@ -336,7 +322,7 @@ func (e *Engineer) doMerge(ctx context.Context, branch, target, sourceIssue stri
 		}
 	}
 
-	_, _ = fmt.Fprintf(e.output, "[Engineer] Successfully merged: %s\n", mergeCommit[:8])
+	fmt.Fprintf(e.output, "[Engineer] Successfully merged: %s\n", mergeCommit[:8])
 	return ProcessResult{
 		Success:     true,
 		MergeCommit: mergeCommit,
@@ -358,12 +344,12 @@ func (e *Engineer) runTests(ctx context.Context) ProcessResult {
 	var lastErr error
 	for attempt := 1; attempt <= maxRetries; attempt++ {
 		if attempt > 1 {
-			_, _ = fmt.Fprintf(e.output, "[Engineer] Retrying tests (attempt %d/%d)...\n", attempt, maxRetries)
+			fmt.Fprintf(e.output, "[Engineer] Retrying tests (attempt %d/%d)...\n", attempt, maxRetries)
 		}
 
 		// Note: TestCommand comes from rig's config.json (trusted infrastructure config),
 		// not from PR branches. Shell execution is intentional for flexibility (pipes, etc).
-		cmd := exec.CommandContext(ctx, "sh", "-c", e.config.TestCommand) //nolint:gosec // G204: TestCommand is from trusted rig config
+		cmd := exec.CommandContext(ctx, "sh", "-c", e.config.TestCommand)
 		cmd.Dir = e.workDir
 		var stdout, stderr bytes.Buffer
 		cmd.Stdout = &stdout
@@ -375,11 +361,11 @@ func (e *Engineer) runTests(ctx context.Context) ProcessResult {
 		}
 		lastErr = err
 
-		// Check if context was canceled
+		// Check if context was cancelled
 		if ctx.Err() != nil {
 			return ProcessResult{
 				Success: false,
-				Error:   "test run canceled",
+				Error:   "test run cancelled",
 			}
 		}
 	}
@@ -410,42 +396,42 @@ func (e *Engineer) handleSuccess(mr *beads.Issue, result ProcessResult) {
 	mrFields.CloseReason = "merged"
 	newDesc := beads.SetMRFields(mr, mrFields)
 	if err := e.beads.Update(mr.ID, beads.UpdateOptions{Description: &newDesc}); err != nil {
-		_, _ = fmt.Fprintf(e.output, "[Engineer] Warning: failed to update MR %s with merge commit: %v\n", mr.ID, err)
+		fmt.Fprintf(e.output, "[Engineer] Warning: failed to update MR %s with merge commit: %v\n", mr.ID, err)
 	}
 
 	// 2. Close MR with reason 'merged'
 	if err := e.beads.CloseWithReason("merged", mr.ID); err != nil {
-		_, _ = fmt.Fprintf(e.output, "[Engineer] Warning: failed to close MR %s: %v\n", mr.ID, err)
+		fmt.Fprintf(e.output, "[Engineer] Warning: failed to close MR %s: %v\n", mr.ID, err)
 	}
 
 	// 3. Close source issue with reference to MR
 	if mrFields.SourceIssue != "" {
 		closeReason := fmt.Sprintf("Merged in %s", mr.ID)
 		if err := e.beads.CloseWithReason(closeReason, mrFields.SourceIssue); err != nil {
-			_, _ = fmt.Fprintf(e.output, "[Engineer] Warning: failed to close source issue %s: %v\n", mrFields.SourceIssue, err)
+			fmt.Fprintf(e.output, "[Engineer] Warning: failed to close source issue %s: %v\n", mrFields.SourceIssue, err)
 		} else {
-			_, _ = fmt.Fprintf(e.output, "[Engineer] Closed source issue: %s\n", mrFields.SourceIssue)
+			fmt.Fprintf(e.output, "[Engineer] Closed source issue: %s\n", mrFields.SourceIssue)
 		}
 	}
 
 	// 3.5. Clear agent bead's active_mr reference (traceability cleanup)
 	if mrFields.AgentBead != "" {
 		if err := e.beads.UpdateAgentActiveMR(mrFields.AgentBead, ""); err != nil {
-			_, _ = fmt.Fprintf(e.output, "[Engineer] Warning: failed to clear agent bead %s active_mr: %v\n", mrFields.AgentBead, err)
+			fmt.Fprintf(e.output, "[Engineer] Warning: failed to clear agent bead %s active_mr: %v\n", mrFields.AgentBead, err)
 		}
 	}
 
 	// 4. Delete source branch if configured (local only - branches never go to origin)
 	if e.config.DeleteMergedBranches && mrFields.Branch != "" {
 		if err := e.git.DeleteBranch(mrFields.Branch, true); err != nil {
-			_, _ = fmt.Fprintf(e.output, "[Engineer] Warning: failed to delete branch %s: %v\n", mrFields.Branch, err)
+			fmt.Fprintf(e.output, "[Engineer] Warning: failed to delete branch %s: %v\n", mrFields.Branch, err)
 		} else {
-			_, _ = fmt.Fprintf(e.output, "[Engineer] Deleted local branch: %s\n", mrFields.Branch)
+			fmt.Fprintf(e.output, "[Engineer] Deleted local branch: %s\n", mrFields.Branch)
 		}
 	}
 
 	// 5. Log success
-	_, _ = fmt.Fprintf(e.output, "[Engineer] ✓ Merged: %s (commit: %s)\n", mr.ID, result.MergeCommit)
+	fmt.Fprintf(e.output, "[Engineer] ✓ Merged: %s (commit: %s)\n", mr.ID, result.MergeCommit)
 }
 
 // handleFailure handles a failed merge request.
@@ -454,25 +440,25 @@ func (e *Engineer) handleFailure(mr *beads.Issue, result ProcessResult) {
 	// Reopen the MR (back to open status for rework)
 	open := "open"
 	if err := e.beads.Update(mr.ID, beads.UpdateOptions{Status: &open}); err != nil {
-		_, _ = fmt.Fprintf(e.output, "[Engineer] Warning: failed to reopen MR %s: %v\n", mr.ID, err)
+		fmt.Fprintf(e.output, "[Engineer] Warning: failed to reopen MR %s: %v\n", mr.ID, err)
 	}
 
 	// Log the failure
-	_, _ = fmt.Fprintf(e.output, "[Engineer] ✗ Failed: %s - %s\n", mr.ID, result.Error)
+	fmt.Fprintf(e.output, "[Engineer] ✗ Failed: %s - %s\n", mr.ID, result.Error)
 }
 
 // ProcessMRFromQueue processes a merge request from wisp queue.
 func (e *Engineer) ProcessMRFromQueue(ctx context.Context, mr *mrqueue.MR) ProcessResult {
 	// MR fields are directly on the struct (no parsing needed)
-	_, _ = fmt.Fprintln(e.output, "[Engineer] Processing MR from queue:")
-	_, _ = fmt.Fprintf(e.output, "  Branch: %s\n", mr.Branch)
-	_, _ = fmt.Fprintf(e.output, "  Target: %s\n", mr.Target)
-	_, _ = fmt.Fprintf(e.output, "  Worker: %s\n", mr.Worker)
-	_, _ = fmt.Fprintf(e.output, "  Source: %s\n", mr.SourceIssue)
+	fmt.Fprintln(e.output, "[Engineer] Processing MR from queue:")
+	fmt.Fprintf(e.output, "  Branch: %s\n", mr.Branch)
+	fmt.Fprintf(e.output, "  Target: %s\n", mr.Target)
+	fmt.Fprintf(e.output, "  Worker: %s\n", mr.Worker)
+	fmt.Fprintf(e.output, "  Source: %s\n", mr.SourceIssue)
 
 	// Emit merge_started event
 	if err := e.eventLogger.LogMergeStarted(mr); err != nil {
-		_, _ = fmt.Fprintf(e.output, "[Engineer] Warning: failed to log merge_started event: %v\n", err)
+		fmt.Fprintf(e.output, "[Engineer] Warning: failed to log merge_started event: %v\n", err)
 	}
 
 	// Use the shared merge logic
@@ -483,7 +469,7 @@ func (e *Engineer) ProcessMRFromQueue(ctx context.Context, mr *mrqueue.MR) Proce
 func (e *Engineer) handleSuccessFromQueue(mr *mrqueue.MR, result ProcessResult) {
 	// Emit merged event
 	if err := e.eventLogger.LogMerged(mr, result.MergeCommit); err != nil {
-		_, _ = fmt.Fprintf(e.output, "[Engineer] Warning: failed to log merged event: %v\n", err)
+		fmt.Fprintf(e.output, "[Engineer] Warning: failed to log merged event: %v\n", err)
 	}
 
 	// Release merge slot if this was a conflict resolution
@@ -494,73 +480,45 @@ func (e *Engineer) handleSuccessFromQueue(mr *mrqueue.MR, result ProcessResult) 
 		// Only log if it seems like an actual issue
 		errStr := err.Error()
 		if !strings.Contains(errStr, "not held") && !strings.Contains(errStr, "not found") {
-			_, _ = fmt.Fprintf(e.output, "[Engineer] Warning: failed to release merge slot: %v\n", err)
+			fmt.Fprintf(e.output, "[Engineer] Warning: failed to release merge slot: %v\n", err)
 		}
 	} else {
-		_, _ = fmt.Fprintf(e.output, "[Engineer] Released merge slot\n")
-	}
-
-	// Update and close the MR bead (matches handleSuccess behavior)
-	if mr.ID != "" {
-		// Fetch the MR bead to update its fields
-		mrBead, err := e.beads.Show(mr.ID)
-		if err != nil {
-			_, _ = fmt.Fprintf(e.output, "[Engineer] Warning: failed to fetch MR bead %s: %v\n", mr.ID, err)
-		} else {
-			// Update MR with merge_commit SHA and close_reason
-			mrFields := beads.ParseMRFields(mrBead)
-			if mrFields == nil {
-				mrFields = &beads.MRFields{}
-			}
-			mrFields.MergeCommit = result.MergeCommit
-			mrFields.CloseReason = "merged"
-			newDesc := beads.SetMRFields(mrBead, mrFields)
-			if err := e.beads.Update(mr.ID, beads.UpdateOptions{Description: &newDesc}); err != nil {
-				_, _ = fmt.Fprintf(e.output, "[Engineer] Warning: failed to update MR %s with merge commit: %v\n", mr.ID, err)
-			}
-		}
-
-		// Close MR bead with reason 'merged'
-		if err := e.beads.CloseWithReason("merged", mr.ID); err != nil {
-			_, _ = fmt.Fprintf(e.output, "[Engineer] Warning: failed to close MR %s: %v\n", mr.ID, err)
-		} else {
-			_, _ = fmt.Fprintf(e.output, "[Engineer] Closed MR bead: %s\n", mr.ID)
-		}
+		fmt.Fprintf(e.output, "[Engineer] Released merge slot\n")
 	}
 
 	// 1. Close source issue with reference to MR
 	if mr.SourceIssue != "" {
 		closeReason := fmt.Sprintf("Merged in %s", mr.ID)
 		if err := e.beads.CloseWithReason(closeReason, mr.SourceIssue); err != nil {
-			_, _ = fmt.Fprintf(e.output, "[Engineer] Warning: failed to close source issue %s: %v\n", mr.SourceIssue, err)
+			fmt.Fprintf(e.output, "[Engineer] Warning: failed to close source issue %s: %v\n", mr.SourceIssue, err)
 		} else {
-			_, _ = fmt.Fprintf(e.output, "[Engineer] Closed source issue: %s\n", mr.SourceIssue)
+			fmt.Fprintf(e.output, "[Engineer] Closed source issue: %s\n", mr.SourceIssue)
 		}
 	}
 
 	// 1.5. Clear agent bead's active_mr reference (traceability cleanup)
 	if mr.AgentBead != "" {
 		if err := e.beads.UpdateAgentActiveMR(mr.AgentBead, ""); err != nil {
-			_, _ = fmt.Fprintf(e.output, "[Engineer] Warning: failed to clear agent bead %s active_mr: %v\n", mr.AgentBead, err)
+			fmt.Fprintf(e.output, "[Engineer] Warning: failed to clear agent bead %s active_mr: %v\n", mr.AgentBead, err)
 		}
 	}
 
 	// 2. Delete source branch if configured (local only)
 	if e.config.DeleteMergedBranches && mr.Branch != "" {
 		if err := e.git.DeleteBranch(mr.Branch, true); err != nil {
-			_, _ = fmt.Fprintf(e.output, "[Engineer] Warning: failed to delete branch %s: %v\n", mr.Branch, err)
+			fmt.Fprintf(e.output, "[Engineer] Warning: failed to delete branch %s: %v\n", mr.Branch, err)
 		} else {
-			_, _ = fmt.Fprintf(e.output, "[Engineer] Deleted local branch: %s\n", mr.Branch)
+			fmt.Fprintf(e.output, "[Engineer] Deleted local branch: %s\n", mr.Branch)
 		}
 	}
 
 	// 3. Remove MR from queue (ephemeral - just delete the file)
 	if err := e.mrQueue.Remove(mr.ID); err != nil {
-		_, _ = fmt.Fprintf(e.output, "[Engineer] Warning: failed to remove MR from queue: %v\n", err)
+		fmt.Fprintf(e.output, "[Engineer] Warning: failed to remove MR from queue: %v\n", err)
 	}
 
 	// 4. Log success
-	_, _ = fmt.Fprintf(e.output, "[Engineer] ✓ Merged: %s (commit: %s)\n", mr.ID, result.MergeCommit)
+	fmt.Fprintf(e.output, "[Engineer] ✓ Merged: %s (commit: %s)\n", mr.ID, result.MergeCommit)
 }
 
 // handleFailureFromQueue handles a failed merge from wisp queue.
@@ -569,22 +527,7 @@ func (e *Engineer) handleSuccessFromQueue(mr *mrqueue.MR, result ProcessResult) 
 func (e *Engineer) handleFailureFromQueue(mr *mrqueue.MR, result ProcessResult) {
 	// Emit merge_failed event
 	if err := e.eventLogger.LogMergeFailed(mr, result.Error); err != nil {
-		_, _ = fmt.Fprintf(e.output, "[Engineer] Warning: failed to log merge_failed event: %v\n", err)
-	}
-
-	// Notify Witness of the failure so polecat can be alerted
-	// Determine failure type from result
-	failureType := "build"
-	if result.Conflict {
-		failureType = "conflict"
-	} else if result.TestsFailed {
-		failureType = "tests"
-	}
-	msg := protocol.NewMergeFailedMessage(e.rig.Name, mr.Worker, mr.Branch, mr.SourceIssue, mr.Target, failureType, result.Error)
-	if err := e.router.Send(msg); err != nil {
-		fmt.Fprintf(e.output, "[Engineer] Warning: failed to send MERGE_FAILED to witness: %v\n", err)
-	} else {
-		fmt.Fprintf(e.output, "[Engineer] Notified witness of merge failure for %s\n", mr.Worker)
+		fmt.Fprintf(e.output, "[Engineer] Warning: failed to log merge_failed event: %v\n", err)
 	}
 
 	// If this was a conflict, create a conflict-resolution task for dispatch
@@ -592,24 +535,24 @@ func (e *Engineer) handleFailureFromQueue(mr *mrqueue.MR, result ProcessResult) 
 	if result.Conflict {
 		taskID, err := e.createConflictResolutionTask(mr, result)
 		if err != nil {
-			_, _ = fmt.Fprintf(e.output, "[Engineer] Warning: failed to create conflict resolution task: %v\n", err)
+			fmt.Fprintf(e.output, "[Engineer] Warning: failed to create conflict resolution task: %v\n", err)
 		} else {
 			// Block the MR on the conflict resolution task
 			// When the task closes, the MR unblocks and re-enters the ready queue
 			if err := e.mrQueue.SetBlockedBy(mr.ID, taskID); err != nil {
-				_, _ = fmt.Fprintf(e.output, "[Engineer] Warning: failed to block MR on task: %v\n", err)
+				fmt.Fprintf(e.output, "[Engineer] Warning: failed to block MR on task: %v\n", err)
 			} else {
-				_, _ = fmt.Fprintf(e.output, "[Engineer] MR %s blocked on conflict task %s (non-blocking delegation)\n", mr.ID, taskID)
+				fmt.Fprintf(e.output, "[Engineer] MR %s blocked on conflict task %s (non-blocking delegation)\n", mr.ID, taskID)
 			}
 		}
 	}
 
 	// Log the failure - MR stays in queue but may be blocked
-	_, _ = fmt.Fprintf(e.output, "[Engineer] ✗ Failed: %s - %s\n", mr.ID, result.Error)
+	fmt.Fprintf(e.output, "[Engineer] ✗ Failed: %s - %s\n", mr.ID, result.Error)
 	if mr.BlockedBy != "" {
-		_, _ = fmt.Fprintln(e.output, "[Engineer] MR blocked pending conflict resolution - queue continues to next MR")
+		fmt.Fprintln(e.output, "[Engineer] MR blocked pending conflict resolution - queue continues to next MR")
 	} else {
-		_, _ = fmt.Fprintln(e.output, "[Engineer] MR remains in queue for retry")
+		fmt.Fprintln(e.output, "[Engineer] MR remains in queue for retry")
 	}
 }
 
@@ -629,29 +572,29 @@ func (e *Engineer) handleFailureFromQueue(mr *mrqueue.MR, result ProcessResult) 
 // This serializes conflict resolution - only one polecat can resolve conflicts at a time.
 // If the slot is already held, we skip creating the task and let the MR stay in queue.
 // When the current resolution completes and merges, the slot is released.
-func (e *Engineer) createConflictResolutionTask(mr *mrqueue.MR, _ ProcessResult) (string, error) { // result unused but kept for future merge diagnostics
+func (e *Engineer) createConflictResolutionTask(mr *mrqueue.MR, result ProcessResult) (string, error) {
 	// === MERGE SLOT GATE: Serialize conflict resolution ===
 	// Ensure merge slot exists (idempotent)
 	slotID, err := e.beads.MergeSlotEnsureExists()
 	if err != nil {
-		_, _ = fmt.Fprintf(e.output, "[Engineer] Warning: could not ensure merge slot: %v\n", err)
+		fmt.Fprintf(e.output, "[Engineer] Warning: could not ensure merge slot: %v\n", err)
 		// Continue anyway - slot is optional for now
 	} else {
 		// Try to acquire the merge slot
 		holder := e.rig.Name + "/refinery"
 		status, err := e.beads.MergeSlotAcquire(holder, false)
 		if err != nil {
-			_, _ = fmt.Fprintf(e.output, "[Engineer] Warning: could not acquire merge slot: %v\n", err)
+			fmt.Fprintf(e.output, "[Engineer] Warning: could not acquire merge slot: %v\n", err)
 			// Continue anyway - slot is optional
 		} else if !status.Available && status.Holder != "" && status.Holder != holder {
 			// Slot is held by someone else - skip creating the task
 			// The MR stays in queue and will retry when slot is released
-			_, _ = fmt.Fprintf(e.output, "[Engineer] Merge slot held by %s - deferring conflict resolution\n", status.Holder)
-			_, _ = fmt.Fprintf(e.output, "[Engineer] MR %s will retry after current resolution completes\n", mr.ID)
+			fmt.Fprintf(e.output, "[Engineer] Merge slot held by %s - deferring conflict resolution\n", status.Holder)
+			fmt.Fprintf(e.output, "[Engineer] MR %s will retry after current resolution completes\n", mr.ID)
 			return "", nil // Not an error - just deferred
 		}
 		// Either we acquired the slot, or status indicates we already hold it
-		_, _ = fmt.Fprintf(e.output, "[Engineer] Acquired merge slot: %s\n", slotID)
+		fmt.Fprintf(e.output, "[Engineer] Acquired merge slot: %s\n", slotID)
 	}
 
 	// Get the current main SHA for conflict tracking
@@ -723,7 +666,7 @@ The Refinery will automatically retry the merge after you force-push.`,
 	// The conflict task's ID is returned so the MR can be blocked on it.
 	// When the task closes, the MR unblocks and re-enters the ready queue.
 
-	_, _ = fmt.Fprintf(e.output, "[Engineer] Created conflict resolution task: %s (P%d)\n", task.ID, task.Priority)
+	fmt.Fprintf(e.output, "[Engineer] Created conflict resolution task: %s (P%d)\n", task.ID, task.Priority)
 
 	// Update the MR's retry count for priority scoring
 	mr.RetryCount = retryCount

@@ -526,10 +526,6 @@ func runCostsRecord(cmd *cobra.Command, args []string) error {
 		session = deriveSessionName()
 	}
 	if session == "" {
-		// Try to detect current tmux session (works when running inside tmux)
-		session = detectCurrentTmuxSession()
-	}
-	if session == "" {
 		return fmt.Errorf("--session flag required (or set GT_SESSION env var, or GT_RIG/GT_ROLE)")
 	}
 
@@ -605,16 +601,6 @@ func runCostsRecord(cmd *cobra.Command, args []string) error {
 
 	eventID := strings.TrimSpace(string(output))
 
-	// Auto-close session events immediately after creation.
-	// These are informational audit events that don't need to stay open.
-	// The event data is preserved in the closed bead and remains queryable.
-	closeCmd := exec.Command("bd", "close", eventID, "--reason=auto-closed session event")
-	if closeErr := closeCmd.Run(); closeErr != nil {
-		// Non-fatal: event was created, just couldn't auto-close
-		// The witness patrol can clean these up if needed
-		fmt.Fprintf(os.Stderr, "warning: could not auto-close session event %s: %v\n", eventID, closeErr)
-	}
-
 	// Output confirmation (silent if cost is zero and no work item)
 	if cost > 0 || recordWorkItem != "" {
 		fmt.Printf("%s Recorded $%.2f for %s (event: %s)", style.Success.Render("✓"), cost, session, eventID)
@@ -632,13 +618,12 @@ func runCostsRecord(cmd *cobra.Command, args []string) error {
 //   - Polecats: gt-{rig}-{polecat} (e.g., gt-gastown-toast)
 //   - Crew: gt-{rig}-crew-{crew} (e.g., gt-gastown-crew-max)
 //   - Witness/Refinery: gt-{rig}-{role} (e.g., gt-gastown-witness)
-//   - Mayor/Deacon: gt-{town}-{role} (e.g., gt-ai-mayor)
+//   - Mayor/Deacon: gt-{role} (e.g., gt-mayor)
 func deriveSessionName() string {
 	role := os.Getenv("GT_ROLE")
 	rig := os.Getenv("GT_RIG")
 	polecat := os.Getenv("GT_POLECAT")
 	crew := os.Getenv("GT_CREW")
-	town := os.Getenv("GT_TOWN")
 
 	// Polecat: gt-{rig}-{polecat}
 	if polecat != "" && rig != "" {
@@ -650,9 +635,9 @@ func deriveSessionName() string {
 		return fmt.Sprintf("gt-%s-crew-%s", rig, crew)
 	}
 
-	// Town-level roles (mayor, deacon): gt-{town}-{role}
-	if (role == "mayor" || role == "deacon") && town != "" {
-		return fmt.Sprintf("gt-%s-%s", town, role)
+	// Global roles without rig: gt-{role}
+	if role != "" && rig == "" {
+		return fmt.Sprintf("gt-%s", role)
 	}
 
 	// Rig-based roles (witness, refinery): gt-{rig}-{role}
@@ -660,28 +645,6 @@ func deriveSessionName() string {
 		return fmt.Sprintf("gt-%s-%s", rig, role)
 	}
 
-	return ""
-}
-
-// detectCurrentTmuxSession returns the current tmux session name if running inside tmux.
-// Uses `tmux display-message -p '#S'` which prints the session name.
-func detectCurrentTmuxSession() string {
-	// Check if we're inside tmux
-	if os.Getenv("TMUX") == "" {
-		return ""
-	}
-
-	cmd := exec.Command("tmux", "display-message", "-p", "#S")
-	output, err := cmd.Output()
-	if err != nil {
-		return ""
-	}
-
-	session := strings.TrimSpace(string(output))
-	// Only return if it looks like a Gas Town session
-	if strings.HasPrefix(session, constants.SessionPrefix) {
-		return session
-	}
 	return ""
 }
 

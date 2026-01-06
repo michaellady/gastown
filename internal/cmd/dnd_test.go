@@ -9,9 +9,8 @@ func TestAddressToAgentBeadID(t *testing.T) {
 		address  string
 		expected string
 	}{
-		// Mayor and deacon use hq- prefix (town-level)
-		{"mayor", "hq-mayor"},
-		{"deacon", "hq-deacon"},
+		{"mayor", "gt-mayor"},
+		{"deacon", "gt-deacon"},
 		{"gastown/witness", "gt-gastown-witness"},
 		{"gastown/refinery", "gt-gastown-refinery"},
 		{"gastown/alpha", "gt-gastown-polecat-alpha"},

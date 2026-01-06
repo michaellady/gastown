@@ -106,6 +106,7 @@ bd close <step-id>          # Mark step complete
 git status                  # Check working tree
 git add <files>             # Stage changes
 git commit -m "msg (issue)" # Commit with issue reference
+git push                    # Push your branch
 ```
 
 ### Communication
@@ -148,13 +149,15 @@ When your work is done, follow this EXACT checklist:
 
 ```
 [ ] 1. Tests pass:        go test ./...
-[ ] 2. Commit changes:    git add <files> && git commit -m "msg (issue-id)"
-[ ] 3. Sync beads:        bd sync
-[ ] 4. Exit session:      gt done --exit
+[ ] 2. COMMIT changes:    git add <files> && git commit -m "msg (issue-id)"
+[ ] 3. Push branch:       git push -u origin HEAD
+[ ] 4. Close issue:       bd close <issue> --reason "..."
+[ ] 5. Sync beads:        bd sync
+[ ] 6. Exit session:      gt done --exit
 ```
 
-**Note**: No push needed - your branch stays local. Refinery accesses it
-via shared .repo.git and merges to main.
+**CRITICAL**: You MUST commit and push BEFORE running `gt done --exit`.
+If you skip the commit, your work will be lost!
 
 The `gt done --exit` command:
 - Creates a merge request bead
@@ -166,21 +169,18 @@ The `gt done --exit` command:
 
 > **Work is NOT landed until it's on `main` OR in the Refinery MQ.**
 
-Your local branch is NOT landed. You must run `gt done` to submit it to the
-merge queue. Without this step:
+Your branch sitting on origin is NOT landed. You must run `gt done` to submit it
+to the merge queue. Without this step:
 - Your work is invisible to other agents
 - The branch will go stale as main diverges
 - Merge conflicts will compound over time
 - Work can be lost if your polecat is recycled
 
-**Local branch → `gt done` → MR in queue → Refinery merges → LANDED**
+**Branch → `gt done` → MR in queue → Refinery merges → LANDED**
 
 ---
 
 ## Self-Managed Session Lifecycle
-
-> See [Polecat Lifecycle](docs/polecat-lifecycle.md) for the full three-layer architecture
-> (session/sandbox/slot).
 
 **You own your session cadence.** The Witness monitors but doesn't force recycles.
 

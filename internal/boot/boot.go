@@ -16,11 +16,7 @@ import (
 )
 
 // SessionName is the tmux session name for Boot.
-// Note: We use "gt-boot" instead of "hq-deacon-boot" to avoid tmux prefix
-// matching collisions. Tmux matches session names by prefix, so "hq-deacon-boot"
-// would match when checking for "hq-deacon", causing HasSession("hq-deacon")
-// to return true when only Boot is running.
-const SessionName = "gt-boot"
+const SessionName = "gt-deacon-boot"
 
 // MarkerFileName is the file that indicates Boot is currently running.
 const MarkerFileName = ".boot-running"
@@ -136,7 +132,7 @@ func (b *Boot) SaveStatus(status *Status) error {
 		return err
 	}
 
-	return os.WriteFile(b.statusPath(), data, 0644) //nolint:gosec // G306: boot status is non-sensitive operational data
+	return os.WriteFile(b.statusPath(), data, 0644)
 }
 
 // LoadStatus loads Boot's last execution status.

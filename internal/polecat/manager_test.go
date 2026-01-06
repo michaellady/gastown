@@ -17,7 +17,8 @@ func TestStateIsActive(t *testing.T) {
 		{StateWorking, true},
 		{StateDone, false},
 		{StateStuck, false},
-		// Legacy active state is treated as active
+		// Legacy states are treated as active
+		{StateIdle, true},
 		{StateActive, true},
 	}
 
@@ -33,6 +34,7 @@ func TestStateIsWorking(t *testing.T) {
 		state   State
 		working bool
 	}{
+		{StateIdle, false},
 		{StateActive, false},
 		{StateWorking, true},
 		{StateDone, false},
@@ -141,9 +143,8 @@ func TestAssigneeID(t *testing.T) {
 // Note: State persistence tests removed - state is now derived from beads assignee field.
 // Integration tests should verify beads-based state management.
 
-func TestGetReturnsWorkingWithoutBeads(t *testing.T) {
-	// When beads is not available, Get should return StateWorking
-	// (assume the polecat is doing something if it exists)
+func TestGetReturnsIdleWithoutBeads(t *testing.T) {
+	// When beads is not available, Get should return StateIdle
 	root := t.TempDir()
 	polecatDir := filepath.Join(root, "polecats", "Test")
 	if err := os.MkdirAll(polecatDir, 0755); err != nil {
@@ -162,7 +163,7 @@ func TestGetReturnsWorkingWithoutBeads(t *testing.T) {
 	}
 	m := NewManager(r, git.NewGit(root))
 
-	// Get should return polecat with StateWorking (assume active if beads unavailable)
+	// Get should return polecat with StateIdle (no beads = no assignment)
 	polecat, err := m.Get("Test")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
@@ -171,8 +172,8 @@ func TestGetReturnsWorkingWithoutBeads(t *testing.T) {
 	if polecat.Name != "Test" {
 		t.Errorf("Name = %q, want Test", polecat.Name)
 	}
-	if polecat.State != StateWorking {
-		t.Errorf("State = %v, want StateWorking (beads not available)", polecat.State)
+	if polecat.State != StateIdle {
+		t.Errorf("State = %v, want StateIdle (beads not available)", polecat.State)
 	}
 }
 

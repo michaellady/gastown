@@ -683,7 +683,7 @@ func extractPrompts(content string) map[string]string {
 // generateFormulaShortID generates a short random ID (5 lowercase chars)
 func generateFormulaShortID() string {
 	b := make([]byte, 3)
-	_, _ = rand.Read(b)
+	rand.Read(b)
 	return strings.ToLower(base32.StdEncoding.EncodeToString(b)[:5])
 }
 

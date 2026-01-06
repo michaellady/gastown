@@ -30,10 +30,9 @@ func createTestGitRepo(t *testing.T, name string) string {
 		t.Fatalf("mkdir repo: %v", err)
 	}
 
-	// Initialize git repo with explicit main branch
-	// (system default may vary, causing checkout failures)
+	// Initialize git repo
 	cmds := [][]string{
-		{"git", "init", "--initial-branch=main"},
+		{"git", "init"},
 		{"git", "config", "user.email", "test@test.com"},
 		{"git", "config", "user.name", "Test User"},
 	}
@@ -543,20 +542,17 @@ func TestRigAddCreatesAgentDirs(t *testing.T) {
 
 	rigPath := filepath.Join(townRoot, "agenttest")
 
-	// Verify agent directories exist (state.json files are no longer created)
-	expectedDirs := []string{
-		"witness",
-		"refinery",
-		"mayor",
+	// Verify agent state files exist
+	expectedStateFiles := []string{
+		"witness/state.json",
+		"refinery/state.json",
+		"mayor/state.json",
 	}
 
-	for _, dir := range expectedDirs {
-		path := filepath.Join(rigPath, dir)
-		info, err := os.Stat(path)
-		if err != nil {
-			t.Errorf("expected directory %s to exist: %v", dir, err)
-		} else if !info.IsDir() {
-			t.Errorf("expected %s to be a directory", dir)
+	for _, stateFile := range expectedStateFiles {
+		path := filepath.Join(rigPath, stateFile)
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("expected state file %s to exist: %v", stateFile, err)
 		}
 	}
 }

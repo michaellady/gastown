@@ -16,9 +16,6 @@ type Rig struct {
 	// GitURL is the remote repository URL.
 	GitURL string `json:"git_url"`
 
-	// LocalRepo is an optional local repository used for reference clones.
-	LocalRepo string `json:"local_repo,omitempty"`
-
 	// Config is the rig-level configuration.
 	Config *config.BeadsConfig `json:"config,omitempty"`
 
@@ -78,14 +75,4 @@ func (r *Rig) BeadsPath() string {
 		return r.Path + "/mayor/rig"
 	}
 	return r.Path
-}
-
-// DefaultBranch returns the configured default branch for this rig.
-// Falls back to "main" if not configured or if config cannot be loaded.
-func (r *Rig) DefaultBranch() string {
-	cfg, err := LoadRigConfig(r.Path)
-	if err != nil || cfg.DefaultBranch == "" {
-		return "main"
-	}
-	return cfg.DefaultBranch
 }

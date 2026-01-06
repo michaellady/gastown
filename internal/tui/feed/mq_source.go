@@ -35,7 +35,7 @@ func NewMQEventSource(beadsDir string) (*MQEventSource, error) {
 		if err != nil {
 			return nil, err
 		}
-		_ = f.Close() //nolint:gosec // G104: best-effort close on file creation
+		f.Close()
 	}
 
 	file, err := os.Open(logPath)
@@ -71,7 +71,7 @@ func (s *MQEventSource) tail(ctx context.Context) {
 	defer close(s.events)
 
 	// Seek to end for live tailing
-	_, _ = s.file.Seek(0, 2)
+	s.file.Seek(0, 2)
 
 	scanner := bufio.NewScanner(s.file)
 	ticker := time.NewTicker(100 * time.Millisecond)

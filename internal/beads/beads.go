@@ -39,7 +39,7 @@ func ResolveBeadsDir(workDir string) string {
 	redirectPath := filepath.Join(beadsDir, "redirect")
 
 	// Check for redirect file
-	data, err := os.ReadFile(redirectPath) //nolint:gosec // G304: path is constructed internally
+	data, err := os.ReadFile(redirectPath)
 	if err != nil {
 		// No redirect, use local .beads
 		return beadsDir
@@ -71,123 +71,15 @@ func ResolveBeadsDir(workDir string) string {
 		return beadsDir
 	}
 
-	// Follow redirect chains (e.g., crew/.beads -> rig/.beads -> mayor/rig/.beads)
-	// This is intentional for the rig-level redirect architecture.
-	// Limit depth to prevent infinite loops from misconfigured redirects.
-	return resolveBeadsDirWithDepth(resolved, 3)
-}
-
-// resolveBeadsDirWithDepth follows redirect chains with a depth limit.
-func resolveBeadsDirWithDepth(beadsDir string, maxDepth int) string {
-	if maxDepth <= 0 {
-		fmt.Fprintf(os.Stderr, "Warning: redirect chain too deep at %s, stopping\n", beadsDir)
-		return beadsDir
+	// Detect redirect chains: check if resolved path also has a redirect
+	resolvedRedirect := filepath.Join(resolved, "redirect")
+	if _, err := os.Stat(resolvedRedirect); err == nil {
+		fmt.Fprintf(os.Stderr, "Warning: redirect chain detected: %s -> %s (which also has a redirect)\n", beadsDir, resolved)
+		// Don't follow chains - just return the first resolved path
+		// The target's redirect is likely errant and should be removed
 	}
 
-	redirectPath := filepath.Join(beadsDir, "redirect")
-	data, err := os.ReadFile(redirectPath) //nolint:gosec // G304: path is constructed internally
-	if err != nil {
-		// No redirect, this is the final destination
-		return beadsDir
-	}
-
-	redirectTarget := strings.TrimSpace(string(data))
-	if redirectTarget == "" {
-		return beadsDir
-	}
-
-	// Resolve relative to parent of beadsDir (the workDir)
-	workDir := filepath.Dir(beadsDir)
-	resolved := filepath.Clean(filepath.Join(workDir, redirectTarget))
-
-	// Detect circular redirect
-	if resolved == beadsDir {
-		fmt.Fprintf(os.Stderr, "Warning: circular redirect detected in %s, stopping\n", redirectPath)
-		return beadsDir
-	}
-
-	// Recursively follow
-	return resolveBeadsDirWithDepth(resolved, maxDepth-1)
-}
-
-// SetupRedirect creates a .beads/redirect file for a worktree to point to the rig's shared beads.
-// This is used by crew, polecats, and refinery worktrees to share the rig's beads database.
-//
-// Parameters:
-//   - townRoot: the town root directory (e.g., ~/gt)
-//   - worktreePath: the worktree directory (e.g., <rig>/crew/<name> or <rig>/refinery/rig)
-//
-// The function:
-//  1. Computes the relative path from worktree to rig-level .beads
-//  2. Cleans up any existing .beads/ contents (from tracked branches)
-//  3. Creates the redirect file
-//
-// Safety: This function refuses to create redirects in the canonical beads location
-// (mayor/rig) to prevent circular redirect chains.
-func SetupRedirect(townRoot, worktreePath string) error {
-	// Get rig root from worktree path
-	// worktreePath = <town>/<rig>/crew/<name> or <town>/<rig>/refinery/rig etc.
-	relPath, err := filepath.Rel(townRoot, worktreePath)
-	if err != nil {
-		return fmt.Errorf("computing relative path: %w", err)
-	}
-	parts := strings.Split(filepath.ToSlash(relPath), "/")
-	if len(parts) < 2 {
-		return fmt.Errorf("invalid worktree path: must be at least 2 levels deep from town root")
-	}
-
-	// Safety check: prevent creating redirect in canonical beads location (mayor/rig)
-	// This would create a circular redirect chain since rig/.beads redirects to mayor/rig/.beads
-	if len(parts) >= 2 && parts[1] == "mayor" {
-		return fmt.Errorf("cannot create redirect in canonical beads location (mayor/rig)")
-	}
-
-	rigRoot := filepath.Join(townRoot, parts[0])
-	rigBeadsPath := filepath.Join(rigRoot, ".beads")
-
-	if _, err := os.Stat(rigBeadsPath); os.IsNotExist(err) {
-		return fmt.Errorf("no rig .beads found at %s", rigBeadsPath)
-	}
-
-	// Clean up any existing .beads/ contents from the branch
-	worktreeBeadsDir := filepath.Join(worktreePath, ".beads")
-	if _, err := os.Stat(worktreeBeadsDir); err == nil {
-		if err := os.RemoveAll(worktreeBeadsDir); err != nil {
-			return fmt.Errorf("cleaning existing .beads dir: %w", err)
-		}
-	}
-
-	// Create .beads directory
-	if err := os.MkdirAll(worktreeBeadsDir, 0755); err != nil {
-		return fmt.Errorf("creating .beads dir: %w", err)
-	}
-
-	// Compute relative path from worktree to rig root
-	// e.g., crew/<name> (depth 2) -> ../../.beads
-	//       refinery/rig (depth 2) -> ../../.beads
-	depth := len(parts) - 1 // subtract 1 for rig name itself
-	redirectPath := strings.Repeat("../", depth) + ".beads"
-
-	// Check if rig-level beads has a redirect (tracked beads case).
-	// If so, redirect directly to the final destination to avoid chains.
-	// The bd CLI doesn't support redirect chains, so we must skip intermediate hops.
-	rigRedirectPath := filepath.Join(rigBeadsPath, "redirect")
-	if data, err := os.ReadFile(rigRedirectPath); err == nil {
-		rigRedirectTarget := strings.TrimSpace(string(data))
-		if rigRedirectTarget != "" {
-			// Rig has redirect (e.g., "mayor/rig/.beads" for tracked beads).
-			// Redirect worktree directly to the final destination.
-			redirectPath = strings.Repeat("../", depth) + rigRedirectTarget
-		}
-	}
-
-	// Create redirect file
-	redirectFile := filepath.Join(worktreeBeadsDir, "redirect")
-	if err := os.WriteFile(redirectFile, []byte(redirectPath+"\n"), 0644); err != nil {
-		return fmt.Errorf("creating redirect file: %w", err)
-	}
-
-	return nil
+	return resolved
 }
 
 // Issue represents a beads issue.
@@ -337,7 +229,7 @@ func (b *Beads) run(args ...string) ([]byte, error) {
 	// Use --no-daemon for faster read operations (avoids daemon IPC overhead)
 	// The daemon is primarily useful for write coalescing, not reads
 	fullArgs := append([]string{"--no-daemon"}, args...)
-	cmd := exec.Command("bd", fullArgs...) //nolint:gosec // G204: bd is a trusted internal tool
+	cmd := exec.Command("bd", fullArgs...)
 	cmd.Dir = b.workDir
 
 	// Set BEADS_DIR if specified (enables cross-database access)
@@ -582,49 +474,6 @@ func (b *Beads) Blocked() ([]*Issue, error) {
 // This ensures created_by is populated for issue provenance tracking.
 func (b *Beads) Create(opts CreateOptions) (*Issue, error) {
 	args := []string{"create", "--json"}
-
-	if opts.Title != "" {
-		args = append(args, "--title="+opts.Title)
-	}
-	if opts.Type != "" {
-		args = append(args, "--type="+opts.Type)
-	}
-	if opts.Priority >= 0 {
-		args = append(args, fmt.Sprintf("--priority=%d", opts.Priority))
-	}
-	if opts.Description != "" {
-		args = append(args, "--description="+opts.Description)
-	}
-	if opts.Parent != "" {
-		args = append(args, "--parent="+opts.Parent)
-	}
-	// Default Actor from BD_ACTOR env var if not specified
-	actor := opts.Actor
-	if actor == "" {
-		actor = os.Getenv("BD_ACTOR")
-	}
-	if actor != "" {
-		args = append(args, "--actor="+actor)
-	}
-
-	out, err := b.run(args...)
-	if err != nil {
-		return nil, err
-	}
-
-	var issue Issue
-	if err := json.Unmarshal(out, &issue); err != nil {
-		return nil, fmt.Errorf("parsing bd create output: %w", err)
-	}
-
-	return &issue, nil
-}
-
-// CreateWithID creates an issue with a specific ID.
-// This is useful for agent beads, role beads, and other beads that need
-// deterministic IDs rather than auto-generated ones.
-func (b *Beads) CreateWithID(id string, opts CreateOptions) (*Issue, error) {
-	args := []string{"create", "--json", "--id=" + id}
 
 	if opts.Title != "" {
 		args = append(args, "--title="+opts.Title)
@@ -1083,16 +932,6 @@ func (b *Beads) CreateAgentBead(id, title string, fields *AgentFields) (*Issue, 
 		}
 	}
 
-	// Set the hook slot if specified (this is the authoritative storage)
-	// This fixes the slot inconsistency bug where bead status is 'hooked' but
-	// agent's hook slot is empty. See mi-619.
-	if fields != nil && fields.HookBead != "" {
-		if _, err := b.run("slot", "set", id, "hook", fields.HookBead); err != nil {
-			// Non-fatal: warn but continue - description text has the backup
-			fmt.Printf("Warning: could not set hook slot: %v\n", err)
-		}
-	}
-
 	return &issue, nil
 }
 
@@ -1287,27 +1126,17 @@ func AgentBeadID(rig, role, name string) string {
 }
 
 // MayorBeadID returns the Mayor agent bead ID.
-//
-// Deprecated: Use MayorBeadIDTown() for town-level beads (hq- prefix).
-// This function returns "gt-mayor" which is for rig-level storage.
-// Town-level agents like Mayor should use the hq- prefix.
 func MayorBeadID() string {
 	return "gt-mayor"
 }
 
 // DeaconBeadID returns the Deacon agent bead ID.
-//
-// Deprecated: Use DeaconBeadIDTown() for town-level beads (hq- prefix).
-// This function returns "gt-deacon" which is for rig-level storage.
-// Town-level agents like Deacon should use the hq- prefix.
 func DeaconBeadID() string {
 	return "gt-deacon"
 }
 
 // DogBeadID returns a Dog agent bead ID.
 // Dogs are town-level agents, so they follow the pattern: gt-dog-<name>
-// Deprecated: Use DogBeadIDTown() for town-level beads with hq- prefix.
-// Dogs are town-level agents and should use hq-dog-<name>, not gt-dog-<name>.
 func DogBeadID(name string) string {
 	return "gt-dog-" + name
 }
@@ -1506,25 +1335,18 @@ func IsAgentSessionBead(beadID string) bool {
 }
 
 // Role bead ID naming convention:
-// Role beads are stored in town beads (~/.beads/) with hq- prefix.
-//
-// Canonical format: hq-<role>-role
+//   gt-<role>-role
 //
 // Examples:
-//   - hq-mayor-role
-//   - hq-deacon-role
-//   - hq-witness-role
-//   - hq-refinery-role
-//   - hq-crew-role
-//   - hq-polecat-role
-//
-// Use RoleBeadIDTown() to get canonical role bead IDs.
-// The legacy RoleBeadID() function returns gt-<role>-role for backward compatibility.
+//   - gt-mayor-role
+//   - gt-deacon-role
+//   - gt-witness-role
+//   - gt-refinery-role
+//   - gt-crew-role
+//   - gt-polecat-role
 
 // RoleBeadID returns the role bead ID for a given role type.
 // Role beads define lifecycle configuration for each agent type.
-// Deprecated: Use RoleBeadIDTown() for town-level beads with hq- prefix.
-// Role beads are global templates and should use hq-<role>-role, not gt-<role>-role.
 func RoleBeadID(roleType string) string {
 	return "gt-" + roleType + "-role"
 }

@@ -9,8 +9,6 @@ import (
 	"sort"
 	"strings"
 	"time"
-
-	"github.com/steveyegge/gastown/internal/constants"
 )
 
 var (
@@ -29,7 +27,7 @@ var (
 
 // LoadTownConfig loads and validates a town configuration file.
 func LoadTownConfig(path string) (*TownConfig, error) {
-	data, err := os.ReadFile(path) //nolint:gosec // G304: path is from trusted config location
+	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, fmt.Errorf("%w: %s", ErrNotFound, path)
@@ -64,7 +62,7 @@ func SaveTownConfig(path string, config *TownConfig) error {
 		return fmt.Errorf("encoding config: %w", err)
 	}
 
-	if err := os.WriteFile(path, data, 0600); err != nil {
+	if err := os.WriteFile(path, data, 0644); err != nil {
 		return fmt.Errorf("writing config: %w", err)
 	}
 
@@ -73,7 +71,7 @@ func SaveTownConfig(path string, config *TownConfig) error {
 
 // LoadRigsConfig loads and validates a rigs registry file.
 func LoadRigsConfig(path string) (*RigsConfig, error) {
-	data, err := os.ReadFile(path) //nolint:gosec // G304: path is constructed internally, not from user input
+	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, fmt.Errorf("%w: %s", ErrNotFound, path)
@@ -108,8 +106,52 @@ func SaveRigsConfig(path string, config *RigsConfig) error {
 		return fmt.Errorf("encoding config: %w", err)
 	}
 
-	if err := os.WriteFile(path, data, 0600); err != nil {
+	if err := os.WriteFile(path, data, 0644); err != nil {
 		return fmt.Errorf("writing config: %w", err)
+	}
+
+	return nil
+}
+
+// LoadAgentState loads an agent state file.
+func LoadAgentState(path string) (*AgentState, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("%w: %s", ErrNotFound, path)
+		}
+		return nil, fmt.Errorf("reading state: %w", err)
+	}
+
+	var state AgentState
+	if err := json.Unmarshal(data, &state); err != nil {
+		return nil, fmt.Errorf("parsing state: %w", err)
+	}
+
+	if err := validateAgentState(&state); err != nil {
+		return nil, err
+	}
+
+	return &state, nil
+}
+
+// SaveAgentState saves an agent state to a file.
+func SaveAgentState(path string, state *AgentState) error {
+	if err := validateAgentState(state); err != nil {
+		return err
+	}
+
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return fmt.Errorf("creating directory: %w", err)
+	}
+
+	data, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encoding state: %w", err)
+	}
+
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return fmt.Errorf("writing state: %w", err)
 	}
 
 	return nil
@@ -140,9 +182,17 @@ func validateRigsConfig(c *RigsConfig) error {
 	return nil
 }
 
+// validateAgentState validates an AgentState.
+func validateAgentState(s *AgentState) error {
+	if s.Role == "" {
+		return fmt.Errorf("%w: role", ErrMissingField)
+	}
+	return nil
+}
+
 // LoadRigConfig loads and validates a rig configuration file.
 func LoadRigConfig(path string) (*RigConfig, error) {
-	data, err := os.ReadFile(path) //nolint:gosec // G304: path is constructed internally, not from user input
+	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, fmt.Errorf("%w: %s", ErrNotFound, path)
@@ -177,7 +227,7 @@ func SaveRigConfig(path string, config *RigConfig) error {
 		return fmt.Errorf("encoding config: %w", err)
 	}
 
-	if err := os.WriteFile(path, data, 0644); err != nil { //nolint:gosec // G306: config files don't contain secrets
+	if err := os.WriteFile(path, data, 0644); err != nil {
 		return fmt.Errorf("writing config: %w", err)
 	}
 
@@ -265,7 +315,7 @@ func NewRigSettings() *RigSettings {
 
 // LoadRigSettings loads and validates a rig settings file.
 func LoadRigSettings(path string) (*RigSettings, error) {
-	data, err := os.ReadFile(path) //nolint:gosec // G304: path is constructed internally, not from user input
+	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, fmt.Errorf("%w: %s", ErrNotFound, path)
@@ -300,7 +350,7 @@ func SaveRigSettings(path string, settings *RigSettings) error {
 		return fmt.Errorf("encoding settings: %w", err)
 	}
 
-	if err := os.WriteFile(path, data, 0644); err != nil { //nolint:gosec // G306: settings files don't contain secrets
+	if err := os.WriteFile(path, data, 0644); err != nil {
 		return fmt.Errorf("writing settings: %w", err)
 	}
 
@@ -309,7 +359,7 @@ func SaveRigSettings(path string, settings *RigSettings) error {
 
 // LoadMayorConfig loads and validates a mayor config file.
 func LoadMayorConfig(path string) (*MayorConfig, error) {
-	data, err := os.ReadFile(path) //nolint:gosec // G304: path is constructed internally, not from user input
+	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, fmt.Errorf("%w: %s", ErrNotFound, path)
@@ -344,7 +394,7 @@ func SaveMayorConfig(path string, config *MayorConfig) error {
 		return fmt.Errorf("encoding config: %w", err)
 	}
 
-	if err := os.WriteFile(path, data, 0644); err != nil { //nolint:gosec // G306: config files don't contain secrets
+	if err := os.WriteFile(path, data, 0644); err != nil {
 		return fmt.Errorf("writing config: %w", err)
 	}
 
@@ -370,80 +420,9 @@ func NewMayorConfig() *MayorConfig {
 	}
 }
 
-// DaemonPatrolConfigPath returns the path to the daemon patrol config file.
-func DaemonPatrolConfigPath(townRoot string) string {
-	return filepath.Join(townRoot, constants.DirMayor, DaemonPatrolConfigFileName)
-}
-
-// LoadDaemonPatrolConfig loads and validates a daemon patrol config file.
-func LoadDaemonPatrolConfig(path string) (*DaemonPatrolConfig, error) {
-	data, err := os.ReadFile(path) //nolint:gosec // G304: path is constructed internally
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("%w: %s", ErrNotFound, path)
-		}
-		return nil, fmt.Errorf("reading daemon patrol config: %w", err)
-	}
-
-	var config DaemonPatrolConfig
-	if err := json.Unmarshal(data, &config); err != nil {
-		return nil, fmt.Errorf("parsing daemon patrol config: %w", err)
-	}
-
-	if err := validateDaemonPatrolConfig(&config); err != nil {
-		return nil, err
-	}
-
-	return &config, nil
-}
-
-// SaveDaemonPatrolConfig saves a daemon patrol config to a file.
-func SaveDaemonPatrolConfig(path string, config *DaemonPatrolConfig) error {
-	if err := validateDaemonPatrolConfig(config); err != nil {
-		return err
-	}
-
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return fmt.Errorf("creating directory: %w", err)
-	}
-
-	data, err := json.MarshalIndent(config, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encoding daemon patrol config: %w", err)
-	}
-
-	if err := os.WriteFile(path, data, 0644); err != nil { //nolint:gosec // G306: config files don't contain secrets
-		return fmt.Errorf("writing daemon patrol config: %w", err)
-	}
-
-	return nil
-}
-
-func validateDaemonPatrolConfig(c *DaemonPatrolConfig) error {
-	if c.Type != "daemon-patrol-config" && c.Type != "" {
-		return fmt.Errorf("%w: expected type 'daemon-patrol-config', got '%s'", ErrInvalidType, c.Type)
-	}
-	if c.Version > CurrentDaemonPatrolConfigVersion {
-		return fmt.Errorf("%w: got %d, max supported %d", ErrInvalidVersion, c.Version, CurrentDaemonPatrolConfigVersion)
-	}
-	return nil
-}
-
-// EnsureDaemonPatrolConfig creates the daemon patrol config if it doesn't exist.
-func EnsureDaemonPatrolConfig(townRoot string) error {
-	path := DaemonPatrolConfigPath(townRoot)
-	if _, err := os.Stat(path); err != nil {
-		if !os.IsNotExist(err) {
-			return fmt.Errorf("checking daemon patrol config: %w", err)
-		}
-		return SaveDaemonPatrolConfig(path, NewDaemonPatrolConfig())
-	}
-	return nil
-}
-
 // LoadAccountsConfig loads and validates an accounts configuration file.
 func LoadAccountsConfig(path string) (*AccountsConfig, error) {
-	data, err := os.ReadFile(path) //nolint:gosec // G304: path is constructed internally, not from user input
+	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, fmt.Errorf("%w: %s", ErrNotFound, path)
@@ -478,7 +457,7 @@ func SaveAccountsConfig(path string, config *AccountsConfig) error {
 		return fmt.Errorf("encoding accounts config: %w", err)
 	}
 
-	if err := os.WriteFile(path, data, 0644); err != nil { //nolint:gosec // G306: accounts config doesn't contain sensitive credentials
+	if err := os.WriteFile(path, data, 0644); err != nil {
 		return fmt.Errorf("writing accounts config: %w", err)
 	}
 
@@ -590,7 +569,7 @@ func expandPath(path string) string {
 
 // LoadMessagingConfig loads and validates a messaging configuration file.
 func LoadMessagingConfig(path string) (*MessagingConfig, error) {
-	data, err := os.ReadFile(path) //nolint:gosec // G304: path is constructed internally, not from user input
+	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, fmt.Errorf("%w: %s", ErrNotFound, path)
@@ -625,7 +604,7 @@ func SaveMessagingConfig(path string, config *MessagingConfig) error {
 		return fmt.Errorf("encoding messaging config: %w", err)
 	}
 
-	if err := os.WriteFile(path, data, 0644); err != nil { //nolint:gosec // G306: messaging config doesn't contain secrets
+	if err := os.WriteFile(path, data, 0644); err != nil {
 		return fmt.Errorf("writing messaging config: %w", err)
 	}
 
@@ -715,8 +694,6 @@ func LoadOrCreateMessagingConfig(path string) (*MessagingConfig, error) {
 // LoadRuntimeConfig loads the RuntimeConfig from a rig's settings.
 // Falls back to defaults if settings don't exist or don't specify runtime config.
 // rigPath should be the path to the rig directory (e.g., ~/gt/gastown).
-//
-// Deprecated: Use ResolveAgentConfig for full agent resolution with town settings.
 func LoadRuntimeConfig(rigPath string) *RuntimeConfig {
 	settingsPath := filepath.Join(rigPath, "settings", "config.json")
 	settings, err := LoadRigSettings(settingsPath)
@@ -737,224 +714,27 @@ func LoadRuntimeConfig(rigPath string) *RuntimeConfig {
 	return rc
 }
 
-// TownSettingsPath returns the path to town settings file.
-func TownSettingsPath(townRoot string) string {
-	return filepath.Join(townRoot, "settings", "config.json")
-}
-
-// RigSettingsPath returns the path to rig settings file.
-func RigSettingsPath(rigPath string) string {
-	return filepath.Join(rigPath, "settings", "config.json")
-}
-
-// LoadOrCreateTownSettings loads town settings or creates defaults if missing.
-func LoadOrCreateTownSettings(path string) (*TownSettings, error) {
-	data, err := os.ReadFile(path) //nolint:gosec // G304: path is constructed internally
-	if err != nil {
-		if os.IsNotExist(err) {
-			return NewTownSettings(), nil
-		}
-		return nil, err
-	}
-
-	var settings TownSettings
-	if err := json.Unmarshal(data, &settings); err != nil {
-		return nil, err
-	}
-	return &settings, nil
-}
-
-// SaveTownSettings saves town settings to a file.
-func SaveTownSettings(path string, settings *TownSettings) error {
-	if settings.Type != "town-settings" && settings.Type != "" {
-		return fmt.Errorf("%w: expected type 'town-settings', got '%s'", ErrInvalidType, settings.Type)
-	}
-	if settings.Version > CurrentTownSettingsVersion {
-		return fmt.Errorf("%w: got %d, max supported %d", ErrInvalidVersion, settings.Version, CurrentTownSettingsVersion)
-	}
-
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return fmt.Errorf("creating directory: %w", err)
-	}
-
-	data, err := json.MarshalIndent(settings, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encoding settings: %w", err)
-	}
-
-	if err := os.WriteFile(path, data, 0644); err != nil { //nolint:gosec // G306: settings files don't contain secrets
-		return fmt.Errorf("writing settings: %w", err)
-	}
-
-	return nil
-}
-
-// ResolveAgentConfig resolves the agent configuration for a rig.
-// It looks up the agent by name in town settings (custom agents) and built-in presets.
-//
-// Resolution order:
-//  1. If rig has Runtime set directly, use it (backwards compatibility)
-//  2. If rig has Agent set, look it up in:
-//     a. Town's custom agents (from TownSettings.Agents)
-//     b. Built-in presets (claude, gemini, codex)
-//  3. If rig has no Agent set, use town's default_agent
-//  4. Fall back to claude defaults
-//
-// townRoot is the path to the town directory (e.g., ~/gt).
-// rigPath is the path to the rig directory (e.g., ~/gt/gastown).
-func ResolveAgentConfig(townRoot, rigPath string) *RuntimeConfig {
-	// Load rig settings
-	rigSettings, err := LoadRigSettings(RigSettingsPath(rigPath))
-	if err != nil {
-		rigSettings = nil
-	}
-
-	// Backwards compatibility: if Runtime is set directly, use it
-	if rigSettings != nil && rigSettings.Runtime != nil {
-		rc := rigSettings.Runtime
-		return fillRuntimeDefaults(rc)
-	}
-
-	// Load town settings for agent lookup
-	townSettings, err := LoadOrCreateTownSettings(TownSettingsPath(townRoot))
-	if err != nil {
-		townSettings = NewTownSettings()
-	}
-
-	// Load custom agent registry if it exists
-	_ = LoadAgentRegistry(DefaultAgentRegistryPath(townRoot))
-
-	// Determine which agent name to use
-	agentName := ""
-	if rigSettings != nil && rigSettings.Agent != "" {
-		agentName = rigSettings.Agent
-	} else if townSettings.DefaultAgent != "" {
-		agentName = townSettings.DefaultAgent
-	} else {
-		agentName = "claude" // ultimate fallback
-	}
-
-	// Look up the agent configuration
-	return lookupAgentConfig(agentName, townSettings)
-}
-
-// lookupAgentConfig looks up an agent by name.
-// First checks town's custom agents, then built-in presets from agents.go.
-func lookupAgentConfig(name string, townSettings *TownSettings) *RuntimeConfig {
-	// First check town's custom agents
-	if townSettings != nil && townSettings.Agents != nil {
-		if custom, ok := townSettings.Agents[name]; ok && custom != nil {
-			return fillRuntimeDefaults(custom)
-		}
-	}
-
-	// Check built-in presets from agents.go
-	if preset := GetAgentPresetByName(name); preset != nil {
-		return RuntimeConfigFromPreset(AgentPreset(name))
-	}
-
-	// Fallback to claude defaults
-	return DefaultRuntimeConfig()
-}
-
-// fillRuntimeDefaults fills in default values for empty RuntimeConfig fields.
-func fillRuntimeDefaults(rc *RuntimeConfig) *RuntimeConfig {
-	if rc == nil {
-		return DefaultRuntimeConfig()
-	}
-	// Create a copy to avoid modifying the original
-	result := &RuntimeConfig{
-		Command:       rc.Command,
-		Args:          rc.Args,
-		InitialPrompt: rc.InitialPrompt,
-	}
-	if result.Command == "" {
-		result.Command = "claude"
-	}
-	if result.Args == nil {
-		result.Args = []string{"--dangerously-skip-permissions"}
-	}
-	return result
-}
-
 // GetRuntimeCommand is a convenience function that returns the full command string
-// for starting an LLM session. It resolves the agent config and builds the command.
+// for starting an LLM session. It loads the config and builds the command.
 func GetRuntimeCommand(rigPath string) string {
-	if rigPath == "" {
-		// Try to detect town root from cwd for town-level agents (mayor, deacon)
-		townRoot, err := findTownRootFromCwd()
-		if err != nil {
-			return DefaultRuntimeConfig().BuildCommand()
-		}
-		return ResolveAgentConfig(townRoot, "").BuildCommand()
-	}
-	// Derive town root from rig path (rig is typically ~/gt/<rigname>)
-	townRoot := filepath.Dir(rigPath)
-	return ResolveAgentConfig(townRoot, rigPath).BuildCommand()
+	return LoadRuntimeConfig(rigPath).BuildCommand()
 }
 
 // GetRuntimeCommandWithPrompt returns the full command with an initial prompt.
 func GetRuntimeCommandWithPrompt(rigPath, prompt string) string {
-	if rigPath == "" {
-		// Try to detect town root from cwd for town-level agents (mayor, deacon)
-		townRoot, err := findTownRootFromCwd()
-		if err != nil {
-			return DefaultRuntimeConfig().BuildCommandWithPrompt(prompt)
-		}
-		return ResolveAgentConfig(townRoot, "").BuildCommandWithPrompt(prompt)
-	}
-	townRoot := filepath.Dir(rigPath)
-	return ResolveAgentConfig(townRoot, rigPath).BuildCommandWithPrompt(prompt)
-}
-
-// findTownRootFromCwd locates the town root by walking up from cwd.
-// It looks for the mayor/town.json marker file.
-// Returns empty string and no error if not found (caller should use defaults).
-func findTownRootFromCwd() (string, error) {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return "", fmt.Errorf("getting cwd: %w", err)
-	}
-
-	absDir, err := filepath.Abs(cwd)
-	if err != nil {
-		return "", fmt.Errorf("resolving path: %w", err)
-	}
-
-	const marker = "mayor/town.json"
-
-	current := absDir
-	for {
-		if _, err := os.Stat(filepath.Join(current, marker)); err == nil {
-			return current, nil
-		}
-
-		parent := filepath.Dir(current)
-		if parent == current {
-			return "", fmt.Errorf("town root not found (no %s marker)", marker)
-		}
-		current = parent
-	}
+	return LoadRuntimeConfig(rigPath).BuildCommandWithPrompt(prompt)
 }
 
 // BuildStartupCommand builds a full startup command with environment exports.
 // envVars is a map of environment variable names to values.
-// rigPath is optional - if empty, tries to detect town root from cwd.
+// rigPath is optional - if empty, uses defaults.
 // prompt is optional - if provided, appended as the initial prompt.
 func BuildStartupCommand(envVars map[string]string, rigPath, prompt string) string {
 	var rc *RuntimeConfig
 	if rigPath != "" {
-		// Derive town root from rig path
-		townRoot := filepath.Dir(rigPath)
-		rc = ResolveAgentConfig(townRoot, rigPath)
+		rc = LoadRuntimeConfig(rigPath)
 	} else {
-		// Try to detect town root from cwd for town-level agents (mayor, deacon)
-		townRoot, err := findTownRootFromCwd()
-		if err != nil {
-			rc = DefaultRuntimeConfig()
-		} else {
-			rc = ResolveAgentConfig(townRoot, "")
-		}
+		rc = DefaultRuntimeConfig()
 	}
 
 	// Build environment export prefix
@@ -1019,28 +799,4 @@ func BuildCrewStartupCommand(rigName, crewName, rigPath, prompt string) string {
 		"GIT_AUTHOR_NAME": crewName,
 	}
 	return BuildStartupCommand(envVars, rigPath, prompt)
-}
-
-// GetRigPrefix returns the beads prefix for a rig from rigs.json.
-// Falls back to "gt" if the rig isn't found or has no prefix configured.
-// townRoot is the path to the town directory (e.g., ~/gt).
-func GetRigPrefix(townRoot, rigName string) string {
-	rigsConfigPath := filepath.Join(townRoot, "mayor", "rigs.json")
-	rigsConfig, err := LoadRigsConfig(rigsConfigPath)
-	if err != nil {
-		return "gt" // fallback
-	}
-
-	entry, ok := rigsConfig.Rigs[rigName]
-	if !ok {
-		return "gt" // fallback
-	}
-
-	if entry.BeadsConfig == nil || entry.BeadsConfig.Prefix == "" {
-		return "gt" // fallback
-	}
-
-	// Strip trailing hyphen if present (prefix stored as "gt-" but used as "gt")
-	prefix := entry.BeadsConfig.Prefix
-	return strings.TrimSuffix(prefix, "-")
 }

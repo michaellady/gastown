@@ -8,8 +8,6 @@ import (
 // ConvoyFetcher defines the interface for fetching convoy data.
 type ConvoyFetcher interface {
 	FetchConvoys() ([]ConvoyRow, error)
-	FetchMergeQueue() ([]MergeQueueRow, error)
-	FetchPolecats() ([]PolecatRow, error)
 }
 
 // ConvoyHandler handles HTTP requests for the convoy dashboard.
@@ -39,22 +37,8 @@ func (h *ConvoyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	mergeQueue, err := h.fetcher.FetchMergeQueue()
-	if err != nil {
-		// Non-fatal: show convoys even if merge queue fails
-		mergeQueue = nil
-	}
-
-	polecats, err := h.fetcher.FetchPolecats()
-	if err != nil {
-		// Non-fatal: show convoys even if polecats fail
-		polecats = nil
-	}
-
 	data := ConvoyData{
-		Convoys:    convoys,
-		MergeQueue: mergeQueue,
-		Polecats:   polecats,
+		Convoys: convoys,
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")

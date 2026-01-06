@@ -30,12 +30,12 @@ func writeJSON(path string, v interface{}) error {
 
 	// Write to temp file then rename for atomicity
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0644); err != nil { //nolint:gosec // G306: wisp messages are non-sensitive operational data
+	if err := os.WriteFile(tmp, data, 0644); err != nil {
 		return fmt.Errorf("write temp: %w", err)
 	}
 
 	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp) // cleanup on failure
+		os.Remove(tmp) // cleanup on failure
 		return fmt.Errorf("rename: %w", err)
 	}
 

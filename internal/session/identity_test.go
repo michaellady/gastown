@@ -6,22 +6,22 @@ import (
 
 func TestParseSessionName(t *testing.T) {
 	tests := []struct {
-		name     string
-		session  string
-		wantRole Role
-		wantRig  string
-		wantName string
-		wantErr  bool
+		name        string
+		session     string
+		wantRole    Role
+		wantRig     string
+		wantName    string
+		wantErr     bool
 	}{
-		// Town-level roles (hq-mayor, hq-deacon)
+		// Global roles (no rig)
 		{
 			name:     "mayor",
-			session:  "hq-mayor",
+			session:  "gt-mayor",
 			wantRole: RoleMayor,
 		},
 		{
 			name:     "deacon",
-			session:  "hq-deacon",
+			session:  "gt-deacon",
 			wantRole: RoleDeacon,
 		},
 
@@ -104,7 +104,7 @@ func TestParseSessionName(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:    "just prefix single segment",
+			name:    "just prefix",
 			session: "gt-x",
 			wantErr: true,
 		},
@@ -142,12 +142,12 @@ func TestAgentIdentity_SessionName(t *testing.T) {
 		{
 			name:     "mayor",
 			identity: AgentIdentity{Role: RoleMayor},
-			want:     "hq-mayor",
+			want:     "gt-mayor",
 		},
 		{
 			name:     "deacon",
 			identity: AgentIdentity{Role: RoleDeacon},
-			want:     "hq-deacon",
+			want:     "gt-deacon",
 		},
 		{
 			name:     "witness",
@@ -230,22 +230,22 @@ func TestAgentIdentity_Address(t *testing.T) {
 func TestParseSessionName_RoundTrip(t *testing.T) {
 	// Test that parsing then reconstructing gives the same result
 	sessions := []string{
-		"hq-mayor",
-		"hq-deacon",
+		"gt-mayor",
+		"gt-deacon",
 		"gt-gastown-witness",
 		"gt-foo-bar-refinery",
 		"gt-gastown-crew-max",
 		"gt-gastown-morsov",
 	}
 
-	for _, sess := range sessions {
-		t.Run(sess, func(t *testing.T) {
-			identity, err := ParseSessionName(sess)
+	for _, session := range sessions {
+		t.Run(session, func(t *testing.T) {
+			identity, err := ParseSessionName(session)
 			if err != nil {
-				t.Fatalf("ParseSessionName(%q) error = %v", sess, err)
+				t.Fatalf("ParseSessionName(%q) error = %v", session, err)
 			}
-			if got := identity.SessionName(); got != sess {
-				t.Errorf("Round-trip failed: ParseSessionName(%q).SessionName() = %q", sess, got)
+			if got := identity.SessionName(); got != session {
+				t.Errorf("Round-trip failed: ParseSessionName(%q).SessionName() = %q", session, got)
 			}
 		})
 	}

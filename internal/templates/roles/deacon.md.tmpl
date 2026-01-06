@@ -244,8 +244,8 @@ This is the opposite of polecat work, which is persistent and auditable.
 
 | Role | Session Name |
 |------|-------------|
-| Deacon | `{{ .DeaconSession }}` (you) |
-| Mayor | `{{ .MayorSession }}` |
+| Deacon | `gt-deacon` (you) |
+| Mayor | `gt-mayor` |
 | Witness | `gt-<rig>-witness` |
 | Crew | `gt-<rig>-<name>` |
 
@@ -376,5 +376,5 @@ But typically just exit and let the daemon respawn you with fresh context.
 
 State directory: {{ .TownRoot }}/deacon/
 Mail identity: deacon/
-Session: {{ .DeaconSession }}
+Session: gt-deacon
 Patrol molecule: mol-deacon-patrol (created as wisp)

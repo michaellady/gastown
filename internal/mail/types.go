@@ -4,7 +4,6 @@ package mail
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"fmt"
 	"strings"
 	"time"
 )
@@ -143,24 +142,16 @@ func NewReplyMessage(from, to, subject, body string, original *Message) *Message
 }
 
 // generateID creates a random message ID.
-// Falls back to time-based ID if crypto/rand fails (extremely rare).
 func generateID() string {
 	b := make([]byte, 8)
-	if _, err := rand.Read(b); err != nil {
-		// Fallback to time-based ID instead of panicking
-		return fmt.Sprintf("msg-%x", time.Now().UnixNano())
-	}
+	_, _ = rand.Read(b) // crypto/rand.Read only fails on broken system
 	return "msg-" + hex.EncodeToString(b)
 }
 
 // generateThreadID creates a random thread ID.
-// Falls back to time-based ID if crypto/rand fails (extremely rare).
 func generateThreadID() string {
 	b := make([]byte, 6)
-	if _, err := rand.Read(b); err != nil {
-		// Fallback to time-based ID instead of panicking
-		return fmt.Sprintf("thread-%x", time.Now().UnixNano())
-	}
+	_, _ = rand.Read(b) // crypto/rand.Read only fails on broken system
 	return "thread-" + hex.EncodeToString(b)
 }
 

@@ -7,46 +7,20 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"time"
 
-	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/rig"
+	"github.com/steveyegge/gastown/internal/templates"
 	"github.com/steveyegge/gastown/internal/util"
 )
 
 // Common errors
 var (
-	ErrCrewExists      = errors.New("crew worker already exists")
-	ErrCrewNotFound    = errors.New("crew worker not found")
-	ErrHasChanges      = errors.New("crew worker has uncommitted changes")
-	ErrInvalidCrewName = errors.New("invalid crew name")
+	ErrCrewExists   = errors.New("crew worker already exists")
+	ErrCrewNotFound = errors.New("crew worker not found")
+	ErrHasChanges   = errors.New("crew worker has uncommitted changes")
 )
-
-// validateCrewName checks that a crew name is safe and valid.
-// Rejects path traversal attempts and characters that break agent ID parsing.
-func validateCrewName(name string) error {
-	if name == "" {
-		return fmt.Errorf("%w: name cannot be empty", ErrInvalidCrewName)
-	}
-	if name == "." || name == ".." {
-		return fmt.Errorf("%w: %q is not allowed", ErrInvalidCrewName, name)
-	}
-	if strings.ContainsAny(name, "/\\") {
-		return fmt.Errorf("%w: %q contains path separators", ErrInvalidCrewName, name)
-	}
-	if strings.Contains(name, "..") {
-		return fmt.Errorf("%w: %q contains path traversal sequence", ErrInvalidCrewName, name)
-	}
-	// Reject characters that break agent ID parsing (same as rig names)
-	if strings.ContainsAny(name, "-. ") {
-		sanitized := strings.NewReplacer("-", "_", ".", "_", " ", "_").Replace(name)
-		sanitized = strings.ToLower(sanitized)
-		return fmt.Errorf("%w: %q contains invalid characters; hyphens, dots, and spaces are reserved for agent ID parsing. Try %q instead", ErrInvalidCrewName, name, sanitized)
-	}
-	return nil
-}
 
 // Manager handles crew worker lifecycle.
 type Manager struct {
@@ -85,9 +59,6 @@ func (m *Manager) exists(name string) bool {
 
 // Add creates a new crew worker with a clone of the rig.
 func (m *Manager) Add(name string, createBranch bool) (*CrewWorker, error) {
-	if err := validateCrewName(name); err != nil {
-		return nil, err
-	}
 	if m.exists(name) {
 		return nil, ErrCrewExists
 	}
@@ -101,21 +72,12 @@ func (m *Manager) Add(name string, createBranch bool) (*CrewWorker, error) {
 	}
 
 	// Clone the rig repo
-	if m.rig.LocalRepo != "" {
-		if err := m.git.CloneWithReference(m.rig.GitURL, crewPath, m.rig.LocalRepo); err != nil {
-			fmt.Printf("Warning: could not clone with local repo reference: %v\n", err)
-			if err := m.git.Clone(m.rig.GitURL, crewPath); err != nil {
-				return nil, fmt.Errorf("cloning rig: %w", err)
-			}
-		}
-	} else {
-		if err := m.git.Clone(m.rig.GitURL, crewPath); err != nil {
-			return nil, fmt.Errorf("cloning rig: %w", err)
-		}
+	if err := m.git.Clone(m.rig.GitURL, crewPath); err != nil {
+		return nil, fmt.Errorf("cloning rig: %w", err)
 	}
 
 	crewGit := git.NewGit(crewPath)
-	branchName := m.rig.DefaultBranch()
+	branchName := "main"
 
 	// Optionally create a working branch
 	if createBranch {
@@ -143,8 +105,12 @@ func (m *Manager) Add(name string, createBranch bool) (*CrewWorker, error) {
 		fmt.Printf("Warning: could not set up shared beads: %v\n", err)
 	}
 
-	// NOTE: Slash commands (.claude/commands/) are provisioned at town level by gt install.
-	// All agents inherit them via Claude's directory traversal - no per-workspace copies needed.
+	// Provision .claude/commands/ with standard slash commands (e.g., /handoff)
+	// This ensures crew workers have Gas Town utilities even if source repo lacks them.
+	if err := templates.ProvisionCommands(crewPath); err != nil {
+		// Non-fatal - crew can still work, warn but don't fail
+		fmt.Printf("Warning: could not provision slash commands: %v\n", err)
+	}
 
 	// NOTE: We intentionally do NOT write to CLAUDE.md here.
 	// Gas Town context is injected ephemerally via SessionStart hook (gt prime).
@@ -173,9 +139,6 @@ func (m *Manager) Add(name string, createBranch bool) (*CrewWorker, error) {
 
 // Remove deletes a crew worker.
 func (m *Manager) Remove(name string, force bool) error {
-	if err := validateCrewName(name); err != nil {
-		return err
-	}
 	if !m.exists(name) {
 		return ErrCrewNotFound
 	}
@@ -228,9 +191,6 @@ func (m *Manager) List() ([]*CrewWorker, error) {
 
 // Get returns a specific crew worker by name.
 func (m *Manager) Get(name string) (*CrewWorker, error) {
-	if err := validateCrewName(name); err != nil {
-		return nil, err
-	}
 	if !m.exists(name) {
 		return nil, ErrCrewNotFound
 	}
@@ -325,9 +285,6 @@ func (m *Manager) Rename(oldName, newName string) error {
 // Pristine ensures a crew worker is up-to-date with remote.
 // It runs git pull --rebase and bd sync.
 func (m *Manager) Pristine(name string) (*PristineResult, error) {
-	if err := validateCrewName(name); err != nil {
-		return nil, err
-	}
 	if !m.exists(name) {
 		return nil, ErrCrewNotFound
 	}
@@ -382,7 +339,50 @@ type PristineResult struct {
 
 // setupSharedBeads creates a redirect file so the crew worker uses the rig's shared .beads database.
 // This eliminates the need for git sync between crew clones - all crew members share one database.
+//
+// Structure:
+//
+//	rig/
+//	  mayor/rig/.beads/     <- Shared database (the canonical location)
+//	  crew/
+//	    <name>/
+//	      .beads/
+//	        redirect        <- Contains "../../mayor/rig/.beads"
 func (m *Manager) setupSharedBeads(crewPath string) error {
-	townRoot := filepath.Dir(m.rig.Path)
-	return beads.SetupRedirect(townRoot, crewPath)
+	// The shared beads database is at rig/mayor/rig/.beads/
+	// Crew clones are at rig/crew/<name>/
+	// So the relative path is ../../mayor/rig/.beads
+	sharedBeadsPath := filepath.Join(m.rig.Path, "mayor", "rig", ".beads")
+
+	// Verify the shared beads exists
+	if _, err := os.Stat(sharedBeadsPath); os.IsNotExist(err) {
+		// Fall back to rig root .beads if mayor/rig doesn't exist
+		sharedBeadsPath = filepath.Join(m.rig.Path, ".beads")
+		if _, err := os.Stat(sharedBeadsPath); os.IsNotExist(err) {
+			return fmt.Errorf("no shared beads database found")
+		}
+	}
+
+	// Create crew's .beads directory
+	crewBeadsDir := filepath.Join(crewPath, ".beads")
+	if err := os.MkdirAll(crewBeadsDir, 0755); err != nil {
+		return fmt.Errorf("creating crew .beads dir: %w", err)
+	}
+
+	// Calculate relative path from crew/.beads/ to shared beads
+	// crew/<name>/.beads/ -> ../../mayor/rig/.beads or ../../.beads
+	var redirectContent string
+	if _, err := os.Stat(filepath.Join(m.rig.Path, "mayor", "rig", ".beads")); err == nil {
+		redirectContent = "../../mayor/rig/.beads\n"
+	} else {
+		redirectContent = "../../.beads\n"
+	}
+
+	// Create redirect file
+	redirectPath := filepath.Join(crewBeadsDir, "redirect")
+	if err := os.WriteFile(redirectPath, []byte(redirectContent), 0644); err != nil {
+		return fmt.Errorf("creating redirect file: %w", err)
+	}
+
+	return nil
 }

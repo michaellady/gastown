@@ -215,28 +215,6 @@ gt doctor                    # Health check
 gt doctor --fix              # Auto-repair
 ```
 
-### Configuration
-
-```bash
-# Agent management
-gt config agent list [--json]     # List all agents (built-in + custom)
-gt config agent get <name>        # Show agent configuration
-gt config agent set <name> <cmd>  # Create or update custom agent
-gt config agent remove <name>     # Remove custom agent (built-ins protected)
-
-# Default agent
-gt config default-agent [name]    # Get or set town default agent
-```
-
-**Built-in agents**: `claude`, `gemini`, `codex`
-
-**Custom agents**: Define per-town in `mayor/town.json`:
-```bash
-gt config agent set claude-glm "claude-glm --model glm-4"
-gt config agent set claude "claude-opus"  # Override built-in
-gt config default-agent claude-glm       # Set default
-```
-
 ### Rig Management
 
 ```bash
@@ -264,7 +242,7 @@ Note: "Swarm" is ephemeral (workers on a convoy's issues). See [Convoys](convoy.
 # Standard workflow: convoy first, then sling
 gt convoy create "Feature X" gt-abc gt-def
 gt sling gt-abc <rig>                    # Assign to polecat
-gt sling <proto> --on gt-def <rig>       # With workflow template
+gt sling gt-def <rig> --molecule=<proto> # With workflow template
 
 # Quick sling (auto-creates convoy)
 gt sling <bead> <rig>                    # Auto-convoy for dashboard visibility
@@ -345,7 +323,7 @@ Deacon, Witness, and Refinery run continuous patrol loops using wisps:
 |-------|-----------------|----------------|
 | **Deacon** | `mol-deacon-patrol` | Agent lifecycle, plugin execution, health checks |
 | **Witness** | `mol-witness-patrol` | Monitor polecats, nudge stuck workers |
-| **Refinery** | `mol-refinery-patrol` | Process merge queue, review MRs |
+| **Refinery** | `mol-refinery-patrol` | Process merge queue, review PRs |
 
 ```
 1. bd mol wisp mol-<role>-patrol

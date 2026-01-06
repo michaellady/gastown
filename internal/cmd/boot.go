@@ -36,7 +36,7 @@ Boot lifecycle:
   4. Boot exits (or handoffs in non-degraded mode)
 
 Location: ~/gt/deacon/dogs/boot/
-Session: gt-boot`,
+Session: gt-deacon-boot`,
 }
 
 var bootStatusCmd = &cobra.Command{
@@ -277,7 +277,7 @@ func runDegradedTriage(b *boot.Boot) (action, target string, err error) {
 	tm := b.Tmux()
 
 	// Check if Deacon session exists
-	deaconSession := getDeaconSessionName()
+	deaconSession := "gt-deacon"
 	hasDeacon, err := tm.HasSession(deaconSession)
 	if err != nil {
 		return "error", "deacon", fmt.Errorf("checking deacon session: %w", err)

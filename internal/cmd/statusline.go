@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -53,17 +52,13 @@ func runStatusLine(cmd *cobra.Command, args []string) error {
 		role = os.Getenv("GT_ROLE")
 	}
 
-	// Get session names for comparison
-	mayorSession := getMayorSessionName()
-	deaconSession := getDeaconSessionName()
-
 	// Determine identity and output based on role
-	if role == "mayor" || statusLineSession == mayorSession {
+	if role == "mayor" || statusLineSession == "gt-mayor" {
 		return runMayorStatusLine(t)
 	}
 
 	// Deacon status line
-	if role == "deacon" || statusLineSession == deaconSession {
+	if role == "deacon" || statusLineSession == "gt-deacon" {
 		return runDeaconStatusLine(t)
 	}
 
@@ -165,8 +160,7 @@ func runMayorStatusLine(t *tmux.Tmux) error {
 
 	// Get town root from mayor pane's working directory
 	var townRoot string
-	mayorSession := getMayorSessionName()
-	paneDir, err := t.GetPaneWorkDir(mayorSession)
+	paneDir, err := t.GetPaneWorkDir("gt-mayor")
 	if err == nil && paneDir != "" {
 		townRoot, _ = workspace.Find(paneDir)
 	}
@@ -182,71 +176,31 @@ func runMayorStatusLine(t *tmux.Tmux) error {
 		}
 	}
 
-	// Track per-rig status for LED indicators
-	type rigStatus struct {
-		hasWitness  bool
-		hasRefinery bool
-	}
-	rigStatuses := make(map[string]*rigStatus)
-
-	// Initialize for all registered rigs
-	for rigName := range registeredRigs {
-		rigStatuses[rigName] = &rigStatus{}
-	}
-
-	// Count polecats and track rig witness/refinery status
+	// Count polecats and rigs
+	// Polecats: only actual polecats (not witnesses, refineries, deacon, crew)
+	// Rigs: only registered rigs with active sessions
 	polecatCount := 0
+	rigs := make(map[string]bool)
 	for _, s := range sessions {
 		agent := categorizeSession(s)
 		if agent == nil {
 			continue
 		}
+		// Count rigs from any rig-level agent, but only if registered
 		if agent.Rig != "" && registeredRigs[agent.Rig] {
-			if rigStatuses[agent.Rig] == nil {
-				rigStatuses[agent.Rig] = &rigStatus{}
-			}
-			switch agent.Type {
-			case AgentWitness:
-				rigStatuses[agent.Rig].hasWitness = true
-			case AgentRefinery:
-				rigStatuses[agent.Rig].hasRefinery = true
-			case AgentPolecat:
-				polecatCount++
-			}
+			rigs[agent.Rig] = true
+		}
+		// Count only polecats for polecat count (in registered rigs)
+		if agent.Type == AgentPolecat && registeredRigs[agent.Rig] {
+			polecatCount++
 		}
 	}
+	rigCount := len(rigs)
 
 	// Build status
 	var parts []string
 	parts = append(parts, fmt.Sprintf("%d 😺", polecatCount))
-
-	// Build rig status display with LED indicators
-	// 🟢 = both witness and refinery running (fully active)
-	// 🟡 = one of witness/refinery running (partially active)
-	// ⚫ = neither running (inactive)
-	var rigParts []string
-	var rigNames []string
-	for rigName := range rigStatuses {
-		rigNames = append(rigNames, rigName)
-	}
-	sort.Strings(rigNames)
-
-	for _, rigName := range rigNames {
-		status := rigStatuses[rigName]
-		var led string
-		if status.hasWitness && status.hasRefinery {
-			led = "🟢" // Both running - fully active
-		} else if status.hasWitness || status.hasRefinery {
-			led = "🟡" // One running - partially active
-		} else {
-			led = "⚫" // Neither running - inactive
-		}
-		rigParts = append(rigParts, led+rigName)
-	}
-
-	if len(rigParts) > 0 {
-		parts = append(parts, strings.Join(rigParts, " "))
-	}
+	parts = append(parts, fmt.Sprintf("%d rigs", rigCount))
 
 	// Priority 1: Check for hooked work (town beads for mayor)
 	hookedWork := ""
@@ -282,8 +236,7 @@ func runDeaconStatusLine(t *tmux.Tmux) error {
 
 	// Get town root from deacon pane's working directory
 	var townRoot string
-	deaconSession := getDeaconSessionName()
-	paneDir, err := t.GetPaneWorkDir(deaconSession)
+	paneDir, err := t.GetPaneWorkDir("gt-deacon")
 	if err == nil && paneDir != "" {
 		townRoot, _ = workspace.Find(paneDir)
 	}

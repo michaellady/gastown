@@ -36,7 +36,7 @@ func TestGetAgentBeadID_UsesRigPrefix(t *testing.T) {
 				Role:     RoleMayor,
 				TownRoot: townRoot,
 			},
-			want: "hq-mayor",
+			want: "gt-mayor",
 		},
 		{
 			name: "deacon",
@@ -44,7 +44,7 @@ func TestGetAgentBeadID_UsesRigPrefix(t *testing.T) {
 				Role:     RoleDeacon,
 				TownRoot: townRoot,
 			},
-			want: "hq-deacon",
+			want: "gt-deacon",
 		},
 		{
 			name: "witness",

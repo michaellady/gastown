@@ -19,9 +19,10 @@ const (
 	// StateStuck means the polecat needs assistance.
 	StateStuck State = "stuck"
 
-	// StateActive is deprecated: use StateWorking.
-	// Kept only for backward compatibility with existing data.
-	StateActive State = "active"
+	// Legacy states for backward compatibility during transition.
+	// New code should not use these.
+	StateIdle   State = "idle"   // Deprecated: use StateWorking
+	StateActive State = "active" // Deprecated: use StateWorking
 )
 
 // IsWorking returns true if the polecat is currently working.
@@ -31,9 +32,9 @@ func (s State) IsWorking() bool {
 
 // IsActive returns true if the polecat session is actively working.
 // For transient polecats, this is true for working state and
-// legacy active state (treated as working).
+// legacy idle/active states (treated as working).
 func (s State) IsActive() bool {
-	return s == StateWorking || s == StateActive
+	return s == StateWorking || s == StateIdle || s == StateActive
 }
 
 // Polecat represents a worker agent in a rig.
@@ -77,49 +78,4 @@ func (p *Polecat) Summary() Summary {
 		State: p.State,
 		Issue: p.Issue,
 	}
-}
-
-// CleanupStatus represents the git state of a polecat for cleanup decisions.
-// The Witness uses this to determine whether it's safe to nuke a polecat worktree.
-type CleanupStatus string
-
-const (
-	// CleanupClean means the worktree has no uncommitted work and is safe to remove.
-	CleanupClean CleanupStatus = "clean"
-
-	// CleanupUncommitted means there are uncommitted changes in the worktree.
-	CleanupUncommitted CleanupStatus = "has_uncommitted"
-
-	// CleanupStash means there are stashed changes that would be lost.
-	CleanupStash CleanupStatus = "has_stash"
-
-	// CleanupUnpushed means there are commits not pushed to the remote.
-	CleanupUnpushed CleanupStatus = "has_unpushed"
-
-	// CleanupUnknown means the status could not be determined.
-	CleanupUnknown CleanupStatus = "unknown"
-)
-
-// IsSafe returns true if the status indicates it's safe to remove the worktree
-// without losing any work.
-func (s CleanupStatus) IsSafe() bool {
-	return s == CleanupClean
-}
-
-// RequiresRecovery returns true if the status indicates there is work that
-// needs to be recovered before removal. This includes uncommitted changes,
-// stashes, and unpushed commits.
-func (s CleanupStatus) RequiresRecovery() bool {
-	switch s {
-	case CleanupUncommitted, CleanupStash, CleanupUnpushed:
-		return true
-	default:
-		return false
-	}
-}
-
-// CanForceRemove returns true if the status allows forced removal.
-// Uncommitted changes can be force-removed, but stashes and unpushed commits cannot.
-func (s CleanupStatus) CanForceRemove() bool {
-	return s == CleanupClean || s == CleanupUncommitted
 }

@@ -3,7 +3,6 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -11,8 +10,6 @@ import (
 	"github.com/steveyegge/gastown/internal/events"
 	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/mail"
-	"github.com/steveyegge/gastown/internal/polecat"
-	"github.com/steveyegge/gastown/internal/rig"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
@@ -150,25 +147,30 @@ func runDone(cmd *cobra.Command, args []string) error {
 		agentBeadID = getAgentBeadID(ctx)
 	}
 
-	// Get configured default branch for this rig
-	defaultBranch := "main" // fallback
-	if rigCfg, err := rig.LoadRigConfig(filepath.Join(townRoot, rigName)); err == nil && rigCfg.DefaultBranch != "" {
-		defaultBranch = rigCfg.DefaultBranch
-	}
-
-	// For COMPLETED, we need an issue ID and branch must not be the default branch
+	// For COMPLETED, we need an issue ID and branch must not be main
 	var mrID string
 	if exitType == ExitCompleted {
-		if branch == defaultBranch || branch == "master" {
-			return fmt.Errorf("cannot submit %s/master branch to merge queue", defaultBranch)
+		if branch == "main" || branch == "master" {
+			return fmt.Errorf("cannot submit main/master branch to merge queue")
 		}
-		// Check that branch has commits ahead of default branch (prevents submitting stale branches)
-		aheadCount, err := g.CommitsAhead(defaultBranch, branch)
+
+		// Check for unpushed commits - branch must be pushed before MR creation
+		// Use BranchPushedToRemote which handles polecat branches without upstream tracking
+		pushed, unpushedCount, err := g.BranchPushedToRemote(branch, "origin")
 		if err != nil {
-			return fmt.Errorf("checking commits ahead of %s: %w", defaultBranch, err)
+			return fmt.Errorf("checking if branch is pushed: %w", err)
+		}
+		if !pushed {
+			return fmt.Errorf("branch has %d unpushed commit(s); run 'git push -u origin %s' first", unpushedCount, branch)
+		}
+
+		// Check that branch has commits ahead of main (prevents submitting stale branches)
+		aheadCount, err := g.CommitsAhead("main", branch)
+		if err != nil {
+			return fmt.Errorf("checking commits ahead of main: %w", err)
 		}
 		if aheadCount == 0 {
-			return fmt.Errorf("branch '%s' has 0 commits ahead of %s; nothing to merge", branch, defaultBranch)
+			return fmt.Errorf("branch '%s' has 0 commits ahead of main; nothing to merge", branch)
 		}
 
 		if issueID == "" {
@@ -176,10 +178,10 @@ func runDone(cmd *cobra.Command, args []string) error {
 		}
 
 		// Initialize beads
-		bd := beads.New(beads.ResolveBeadsDir(cwd))
+		bd := beads.New(cwd)
 
 		// Determine target branch (auto-detect integration branch if applicable)
-		target := defaultBranch
+		target := "main"
 		autoTarget, err := detectIntegrationBranch(bd, g, issueID)
 		if err == nil && autoTarget != "" {
 			target = autoTarget
@@ -272,7 +274,7 @@ func runDone(cmd *cobra.Command, args []string) error {
 		fmt.Printf("%s\n", style.Dim.Render("Witness will dispatch new polecat when gate closes."))
 
 		// Register this polecat as a waiter on the gate
-		bd := beads.New(beads.ResolveBeadsDir(cwd))
+		bd := beads.New(cwd)
 		if err := bd.AddGateWaiter(doneGate, sender); err != nil {
 			style.PrintWarning("could not register as gate waiter: %v", err)
 		} else {
@@ -320,25 +322,8 @@ func runDone(cmd *cobra.Command, args []string) error {
 		fmt.Printf("%s Witness notified of %s\n", style.Bold.Render("✓"), exitType)
 	}
 
-	// Notify dispatcher if work was dispatched by another agent
-	if issueID != "" {
-		if dispatcher := getDispatcherFromBead(cwd, issueID); dispatcher != "" && dispatcher != sender {
-			dispatcherNotification := &mail.Message{
-				To:      dispatcher,
-				From:    sender,
-				Subject: fmt.Sprintf("WORK_DONE: %s", issueID),
-				Body:    strings.Join(bodyLines, "\n"),
-			}
-			if err := townRouter.Send(dispatcherNotification); err != nil {
-				style.PrintWarning("could not notify dispatcher %s: %v", dispatcher, err)
-			} else {
-				fmt.Printf("%s Dispatcher %s notified of %s\n", style.Bold.Render("✓"), dispatcher, exitType)
-			}
-		}
-	}
-
 	// Log done event (townlog and activity feed)
-	_ = LogDone(townRoot, sender, issueID)
+	LogDone(townRoot, sender, issueID)
 	_ = events.LogFeed(events.TypeDone, sender, events.DonePayload(issueID, branch))
 
 	// Update agent bead state (ZFC: self-report completion)
@@ -364,7 +349,7 @@ func runDone(cmd *cobra.Command, args []string) error {
 //   - PHASE_COMPLETE → "awaiting-gate"
 //
 // Also self-reports cleanup_status for ZFC compliance (#10).
-func updateAgentStateOnDone(cwd, townRoot, exitType, _ string) { // issueID unused but kept for future audit logging
+func updateAgentStateOnDone(cwd, townRoot, exitType, issueID string) {
 	// Get role context
 	roleInfo, err := GetRoleWithContext(cwd, townRoot)
 	if err != nil {
@@ -400,29 +385,8 @@ func updateAgentStateOnDone(cwd, townRoot, exitType, _ string) { // issueID unus
 	}
 
 	// Update agent bead with new state and clear hook_bead (work is done)
-	// Use rig path for slot commands - bd slot doesn't route from town root
-	var beadsPath string
-	switch ctx.Role {
-	case RoleMayor, RoleDeacon:
-		beadsPath = townRoot
-	default:
-		beadsPath = filepath.Join(townRoot, ctx.Rig)
-	}
-	bd := beads.New(beadsPath)
-
-	// BUG FIX (gt-vwjz6): Close hooked beads before clearing the hook.
-	// Previously, the agent's hook_bead slot was cleared but the hooked bead itself
-	// stayed status=hooked forever. Now we close the hooked bead before clearing.
-	if agentBead, err := bd.Show(agentBeadID); err == nil && agentBead.HookBead != "" {
-		hookedBeadID := agentBead.HookBead
-		// Only close if the hooked bead exists and is still in "hooked" status
-		if hookedBead, err := bd.Show(hookedBeadID); err == nil && hookedBead.Status == beads.StatusHooked {
-			if err := bd.Close(hookedBeadID); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: couldn't close hooked bead %s: %v\n", hookedBeadID, err)
-			}
-		}
-	}
-
+	// Use town root for routing - ensures cross-beads references work
+	bd := beads.New(townRoot)
 	emptyHook := ""
 	if err := bd.UpdateAgentState(agentBeadID, newState, &emptyHook); err != nil {
 		// Log warning instead of silent ignore - helps debug cross-beads issues
@@ -433,8 +397,8 @@ func updateAgentStateOnDone(cwd, townRoot, exitType, _ string) { // issueID unus
 	// ZFC #10: Self-report cleanup status
 	// Compute git state and report so Witness can decide removal safety
 	cleanupStatus := computeCleanupStatus(cwd)
-	if cleanupStatus != polecat.CleanupUnknown {
-		if err := bd.UpdateAgentCleanupStatus(agentBeadID, string(cleanupStatus)); err != nil {
+	if cleanupStatus != "" {
+		if err := bd.UpdateAgentCleanupStatus(agentBeadID, cleanupStatus); err != nil {
 			// Log warning instead of silent ignore
 			fmt.Fprintf(os.Stderr, "Warning: couldn't update agent %s cleanup status: %v\n", agentBeadID, err)
 			return
@@ -442,46 +406,25 @@ func updateAgentStateOnDone(cwd, townRoot, exitType, _ string) { // issueID unus
 	}
 }
 
-// getDispatcherFromBead retrieves the dispatcher agent ID from the bead's attachment fields.
-// Returns empty string if no dispatcher is recorded.
-func getDispatcherFromBead(cwd, issueID string) string {
-	if issueID == "" {
-		return ""
-	}
-
-	bd := beads.New(beads.ResolveBeadsDir(cwd))
-	issue, err := bd.Show(issueID)
-	if err != nil {
-		return ""
-	}
-
-	fields := beads.ParseAttachmentFields(issue)
-	if fields == nil {
-		return ""
-	}
-
-	return fields.DispatchedBy
-}
-
 // computeCleanupStatus checks git state and returns the cleanup status.
 // Returns the most critical issue: has_unpushed > has_stash > has_uncommitted > clean
-func computeCleanupStatus(cwd string) polecat.CleanupStatus {
+func computeCleanupStatus(cwd string) string {
 	g := git.NewGit(cwd)
 	status, err := g.CheckUncommittedWork()
 	if err != nil {
 		// If we can't check, report unknown - Witness should be cautious
-		return polecat.CleanupUnknown
+		return "unknown"
 	}
 
 	// Check in priority order (most critical first)
 	if status.UnpushedCommits > 0 {
-		return polecat.CleanupUnpushed
+		return "has_unpushed"
 	}
 	if status.StashCount > 0 {
-		return polecat.CleanupStash
+		return "has_stash"
 	}
 	if status.HasUncommittedChanges {
-		return polecat.CleanupUncommitted
+		return "has_uncommitted"
 	}
-	return polecat.CleanupClean
+	return "clean"
 }

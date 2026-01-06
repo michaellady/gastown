@@ -88,14 +88,14 @@ func (c *Curator) Start() error {
 	eventsPath := filepath.Join(c.townRoot, events.EventsFile)
 
 	// Open events file, creating if needed
-	file, err := os.OpenFile(eventsPath, os.O_RDONLY|os.O_CREATE, 0644) //nolint:gosec // G302: events file is non-sensitive operational data
+	file, err := os.OpenFile(eventsPath, os.O_RDONLY|os.O_CREATE, 0644)
 	if err != nil {
 		return fmt.Errorf("opening events file: %w", err)
 	}
 
 	// Seek to end to only process new events
 	if _, err := file.Seek(0, io.SeekEnd); err != nil {
-		_ = file.Close() //nolint:gosec // G104: best effort cleanup on error
+		file.Close()
 		return fmt.Errorf("seeking to end: %w", err)
 	}
 
@@ -285,13 +285,13 @@ func (c *Curator) writeFeedEvent(event *events.Event) {
 	data = append(data, '\n')
 
 	feedPath := filepath.Join(c.townRoot, FeedFile)
-	f, err := os.OpenFile(feedPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644) //nolint:gosec // G302: feed file is non-sensitive operational data
+	f, err := os.OpenFile(feedPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return
 	}
 	defer f.Close()
 
-	_, _ = f.Write(data)
+	f.Write(data)
 }
 
 // generateSummary creates a human-readable summary of an event.

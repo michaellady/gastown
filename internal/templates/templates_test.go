@@ -22,13 +22,9 @@ func TestRenderRole_Mayor(t *testing.T) {
 	}
 
 	data := RoleData{
-		Role:          "mayor",
-		TownRoot:      "/test/town",
-		TownName:      "town",
-		WorkDir:       "/test/town",
-		DefaultBranch: "main",
-		MayorSession:  "gt-town-mayor",
-		DeaconSession: "gt-town-deacon",
+		Role:     "mayor",
+		TownRoot: "/test/town",
+		WorkDir:  "/test/town",
 	}
 
 	output, err := tmpl.RenderRole("mayor", data)
@@ -55,15 +51,11 @@ func TestRenderRole_Polecat(t *testing.T) {
 	}
 
 	data := RoleData{
-		Role:          "polecat",
-		RigName:       "myrig",
-		TownRoot:      "/test/town",
-		TownName:      "town",
-		WorkDir:       "/test/town/myrig/polecats/TestCat",
-		DefaultBranch: "main",
-		Polecat:       "TestCat",
-		MayorSession:  "gt-town-mayor",
-		DeaconSession: "gt-town-deacon",
+		Role:     "polecat",
+		RigName:  "myrig",
+		TownRoot: "/test/town",
+		WorkDir:  "/test/town/myrig/polecats/TestCat",
+		Polecat:  "TestCat",
 	}
 
 	output, err := tmpl.RenderRole("polecat", data)
@@ -90,13 +82,9 @@ func TestRenderRole_Deacon(t *testing.T) {
 	}
 
 	data := RoleData{
-		Role:          "deacon",
-		TownRoot:      "/test/town",
-		TownName:      "town",
-		WorkDir:       "/test/town",
-		DefaultBranch: "main",
-		MayorSession:  "gt-town-mayor",
-		DeaconSession: "gt-town-deacon",
+		Role:     "deacon",
+		TownRoot: "/test/town",
+		WorkDir:  "/test/town",
 	}
 
 	output, err := tmpl.RenderRole("deacon", data)
@@ -119,53 +107,6 @@ func TestRenderRole_Deacon(t *testing.T) {
 	}
 	if !strings.Contains(output, "mol-deacon-patrol") {
 		t.Error("output missing patrol molecule reference")
-	}
-}
-
-func TestRenderRole_Refinery_DefaultBranch(t *testing.T) {
-	tmpl, err := New()
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-
-	// Test with custom default branch (e.g., "develop")
-	data := RoleData{
-		Role:          "refinery",
-		RigName:       "myrig",
-		TownRoot:      "/test/town",
-		TownName:      "town",
-		WorkDir:       "/test/town/myrig/refinery/rig",
-		DefaultBranch: "develop",
-		MayorSession:  "gt-town-mayor",
-		DeaconSession: "gt-town-deacon",
-	}
-
-	output, err := tmpl.RenderRole("refinery", data)
-	if err != nil {
-		t.Fatalf("RenderRole() error = %v", err)
-	}
-
-	// Check that the custom default branch is used in git commands
-	if !strings.Contains(output, "origin/develop") {
-		t.Error("output missing 'origin/develop' - DefaultBranch not being used for rebase")
-	}
-	if !strings.Contains(output, "git checkout develop") {
-		t.Error("output missing 'git checkout develop' - DefaultBranch not being used for checkout")
-	}
-	if !strings.Contains(output, "git push origin develop") {
-		t.Error("output missing 'git push origin develop' - DefaultBranch not being used for push")
-	}
-
-	// Verify it does NOT contain hardcoded "main" in git commands
-	// (main may appear in other contexts like "main branch" descriptions, so we check specific patterns)
-	if strings.Contains(output, "git rebase origin/main") {
-		t.Error("output still contains hardcoded 'git rebase origin/main' - should use DefaultBranch")
-	}
-	if strings.Contains(output, "git checkout main") {
-		t.Error("output still contains hardcoded 'git checkout main' - should use DefaultBranch")
-	}
-	if strings.Contains(output, "git push origin main") {
-		t.Error("output still contains hardcoded 'git push origin main' - should use DefaultBranch")
 	}
 }
 

@@ -56,9 +56,8 @@ func runCrewAdd(cmd *cobra.Command, args []string) error {
 	crewGit := git.NewGit(r.Path)
 	crewMgr := crew.NewManager(r, crewGit)
 
-	// Beads for agent bead creation (use mayor/rig where beads.db lives)
-	// The rig root .beads/ only has config.yaml, no database.
-	bd := beads.New(filepath.Join(r.Path, "mayor", "rig"))
+	// Beads for agent bead creation (use rig root where .beads/ lives)
+	bd := beads.New(r.Path)
 
 	// Track results
 	var created []string
@@ -108,7 +107,7 @@ func runCrewAdd(cmd *cobra.Command, args []string) error {
 				RoleType:   "crew",
 				Rig:        rigName,
 				AgentState: "idle",
-				RoleBead:   beads.RoleBeadIDTown("crew"),
+				RoleBead:   "gt-crew-role",
 			}
 			desc := fmt.Sprintf("Crew worker %s in %s - human-managed persistent workspace.", name, rigName)
 			if _, err := bd.CreateAgentBead(crewID, desc, fields); err != nil {

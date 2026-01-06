@@ -117,7 +117,7 @@ func runDaemonStart(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("starting daemon: %w", err)
 	}
 
-	// Wait a moment for the daemon to initialize and acquire the lock
+	// Wait a moment for the daemon to initialize
 	time.Sleep(200 * time.Millisecond)
 
 	// Verify it started
@@ -127,15 +127,6 @@ func runDaemonStart(cmd *cobra.Command, args []string) error {
 	}
 	if !running {
 		return fmt.Errorf("daemon failed to start (check logs with 'gt daemon logs')")
-	}
-
-	// Check if our spawned process is the one that won the race.
-	// If another concurrent start won, our process would have exited after
-	// failing to acquire the lock, and the PID file would have a different PID.
-	if pid != daemonCmd.Process.Pid {
-		// Another daemon won the race - that's fine, report it
-		fmt.Printf("%s Daemon already running (PID %d)\n", style.Bold.Render("●"), pid)
-		return nil
 	}
 
 	fmt.Printf("%s Daemon started (PID %d)\n", style.Bold.Render("✓"), pid)

@@ -1,11 +1,13 @@
 package refinery
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -141,7 +143,7 @@ func (m *Manager) Start(foreground bool) error {
 			return ErrAlreadyRunning
 		}
 		// Zombie - tmux alive but Claude dead. Kill and recreate.
-		_, _ = fmt.Fprintln(m.output, "⚠ Detected zombie session (tmux alive, Claude dead). Recreating...")
+		fmt.Fprintln(m.output, "⚠ Detected zombie session (tmux alive, Claude dead). Recreating...")
 		if err := t.KillSession(sessionID); err != nil {
 			return fmt.Errorf("killing zombie session: %w", err)
 		}
@@ -179,8 +181,7 @@ func (m *Manager) Start(foreground bool) error {
 	_ = t.SetEnvironment(sessionID, "BD_ACTOR", bdActor)
 
 	// Set beads environment - refinery uses rig-level beads (non-fatal)
-	// Use ResolveBeadsDir to handle both tracked (mayor/rig) and local beads
-	beadsDir := beads.ResolveBeadsDir(m.rig.Path)
+	beadsDir := filepath.Join(m.rig.Path, "mayor", "rig", ".beads")
 	_ = t.SetEnvironment(sessionID, "BEADS_DIR", beadsDir)
 	_ = t.SetEnvironment(sessionID, "BEADS_NO_DAEMON", "1")
 	_ = t.SetEnvironment(sessionID, "BEADS_AGENT_NAME", fmt.Sprintf("%s/refinery", m.rig.Name))
@@ -358,9 +359,6 @@ func (m *Manager) issueToMR(issue *beads.Issue) *MergeRequest {
 		return nil
 	}
 
-	// Get configured default branch for this rig
-	defaultBranch := m.rig.DefaultBranch()
-
 	fields := beads.ParseMRFields(issue)
 	if fields == nil {
 		// No MR fields in description, construct from title/ID
@@ -369,14 +367,14 @@ func (m *Manager) issueToMR(issue *beads.Issue) *MergeRequest {
 			IssueID:      issue.ID,
 			Status:       MROpen,
 			CreatedAt:    parseTime(issue.CreatedAt),
-			TargetBranch: defaultBranch,
+			TargetBranch: "main",
 		}
 	}
 
-	// Default target to rig's default branch if not specified
+	// Default target to main if not specified
 	target := fields.Target
 	if target == "" {
-		target = defaultBranch
+		target = "main"
 	}
 
 	return &MergeRequest{
@@ -404,15 +402,15 @@ func parseTime(s string) time.Time {
 // run is deprecated - foreground mode now just prints a message.
 // The Refinery agent (Claude) handles all merge processing.
 // See: ZFC #5 - Move merge/conflict decisions from Go to Refinery agent
-func (m *Manager) run(_ *Refinery) error { // ref unused: deprecated function
-	_, _ = fmt.Fprintln(m.output, "")
-	_, _ = fmt.Fprintln(m.output, "╔══════════════════════════════════════════════════════════════╗")
-	_, _ = fmt.Fprintln(m.output, "║  Foreground mode is deprecated.                              ║")
-	_, _ = fmt.Fprintln(m.output, "║                                                              ║")
-	_, _ = fmt.Fprintln(m.output, "║  The Refinery agent (Claude) handles all merge decisions.   ║")
-	_, _ = fmt.Fprintln(m.output, "║  Use 'gt refinery start' to run in background mode.         ║")
-	_, _ = fmt.Fprintln(m.output, "╚══════════════════════════════════════════════════════════════╝")
-	_, _ = fmt.Fprintln(m.output, "")
+func (m *Manager) run(ref *Refinery) error {
+	fmt.Fprintln(m.output, "")
+	fmt.Fprintln(m.output, "╔══════════════════════════════════════════════════════════════╗")
+	fmt.Fprintln(m.output, "║  Foreground mode is deprecated.                              ║")
+	fmt.Fprintln(m.output, "║                                                              ║")
+	fmt.Fprintln(m.output, "║  The Refinery agent (Claude) handles all merge decisions.   ║")
+	fmt.Fprintln(m.output, "║  Use 'gt refinery start' to run in background mode.         ║")
+	fmt.Fprintln(m.output, "╚══════════════════════════════════════════════════════════════╝")
+	fmt.Fprintln(m.output, "")
 	return nil
 }
 
@@ -460,7 +458,7 @@ func (m *Manager) completeMR(mr *MergeRequest, closeReason CloseReason, errMsg s
 		// Close the MR (in_progress → closed)
 		if err := mr.Close(closeReason); err != nil {
 			// Log error but continue - this shouldn't happen
-			_, _ = fmt.Fprintf(m.output, "Warning: failed to close MR: %v\n", err)
+			fmt.Fprintf(m.output, "Warning: failed to close MR: %v\n", err)
 		}
 		switch closeReason {
 		case CloseReasonMerged:
@@ -473,7 +471,7 @@ func (m *Manager) completeMR(mr *MergeRequest, closeReason CloseReason, errMsg s
 		// Reopen the MR for rework (in_progress → open)
 		if err := mr.Reopen(); err != nil {
 			// Log error but continue
-			_, _ = fmt.Fprintf(m.output, "Warning: failed to reopen MR: %v\n", err)
+			fmt.Fprintf(m.output, "Warning: failed to reopen MR: %v\n", err)
 		}
 	}
 
@@ -488,7 +486,56 @@ func (m *Manager) runTests(testCmd string) error {
 		return nil
 	}
 
-	return util.ExecRun(m.workDir, parts[0], parts[1:]...)
+	cmd := exec.Command(parts[0], parts[1:]...)
+	cmd.Dir = m.workDir
+
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("%s: %s", err, strings.TrimSpace(stderr.String()))
+	}
+
+	return nil
+}
+
+// gitRun executes a git command.
+func (m *Manager) gitRun(args ...string) error {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = m.workDir
+
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		errMsg := strings.TrimSpace(stderr.String())
+		if errMsg != "" {
+			return fmt.Errorf("%s", errMsg)
+		}
+		return err
+	}
+
+	return nil
+}
+
+// gitOutput executes a git command and returns stdout.
+func (m *Manager) gitOutput(args ...string) (string, error) {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = m.workDir
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		errMsg := strings.TrimSpace(stderr.String())
+		if errMsg != "" {
+			return "", fmt.Errorf("%s", errMsg)
+		}
+		return "", err
+	}
+
+	return strings.TrimSpace(stdout.String()), nil
 }
 
 // getMergeConfig loads the merge configuration from disk.
@@ -524,12 +571,12 @@ func (m *Manager) pushWithRetry(targetBranch string, config MergeConfig) error {
 
 	for attempt := 0; attempt <= config.PushRetryCount; attempt++ {
 		if attempt > 0 {
-			_, _ = fmt.Fprintf(m.output, "Push retry %d/%d after %v\n", attempt, config.PushRetryCount, delay)
+			fmt.Fprintf(m.output, "Push retry %d/%d after %v\n", attempt, config.PushRetryCount, delay)
 			time.Sleep(delay)
 			delay *= 2 // Exponential backoff
 		}
 
-		err := util.ExecRun(m.workDir, "git", "push", "origin", targetBranch)
+		err := m.gitRun("push", "origin", targetBranch)
 		if err == nil {
 			return nil // Success
 		}
@@ -684,7 +731,7 @@ func (m *Manager) Retry(id string, processNow bool) error {
 	// The Refinery agent handles merge processing.
 	// It will pick up this MR in its next patrol cycle.
 	if processNow {
-		_, _ = fmt.Fprintln(m.output, "Note: --now is deprecated. The Refinery agent will process this MR in its next patrol cycle.")
+		fmt.Fprintln(m.output, "Note: --now is deprecated. The Refinery agent will process this MR in its next patrol cycle.")
 	}
 
 	return nil

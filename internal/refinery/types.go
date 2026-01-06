@@ -5,18 +5,20 @@ import (
 	"errors"
 	"fmt"
 	"time"
-
-	"github.com/steveyegge/gastown/internal/agent"
 )
 
-// State is an alias for agent.State for backwards compatibility.
-type State = agent.State
+// State represents the refinery's running state.
+type State string
 
-// State constants - re-exported from agent package for backwards compatibility.
 const (
-	StateStopped = agent.StateStopped
-	StateRunning = agent.StateRunning
-	StatePaused  = agent.StatePaused
+	// StateStopped means the refinery is not running.
+	StateStopped State = "stopped"
+
+	// StateRunning means the refinery is actively processing.
+	StateRunning State = "running"
+
+	// StatePaused means the refinery is paused (not processing new items).
+	StatePaused State = "paused"
 )
 
 // Refinery represents a rig's merge queue processor.

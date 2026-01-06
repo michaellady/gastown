@@ -7,8 +7,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-
-	"github.com/steveyegge/gastown/internal/config"
 )
 
 // RigIsGitRepoCheck verifies the rig has a valid mayor/rig git clone.
@@ -164,7 +162,7 @@ func (c *GitExcludeConfiguredCheck) Run(ctx *CheckContext) *CheckResult {
 				existing[line] = true
 			}
 		}
-		_ = file.Close() //nolint:gosec // G104: best-effort close
+		file.Close()
 	}
 
 	// Check for missing entries
@@ -205,7 +203,7 @@ func (c *GitExcludeConfiguredCheck) Fix(ctx *CheckContext) error {
 	}
 
 	// Append missing entries
-	f, err := os.OpenFile(c.excludePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+	f, err := os.OpenFile(c.excludePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return fmt.Errorf("failed to open exclude file: %w", err)
 	}
@@ -230,126 +228,6 @@ func (c *GitExcludeConfiguredCheck) Fix(ctx *CheckContext) error {
 		}
 	}
 
-	return nil
-}
-
-// HooksPathConfiguredCheck verifies all clones have core.hooksPath set to .githooks.
-// This ensures the pre-push hook blocks pushes to invalid branches (no internal PRs).
-type HooksPathConfiguredCheck struct {
-	FixableCheck
-	unconfiguredClones []string
-}
-
-// NewHooksPathConfiguredCheck creates a new hooks path check.
-func NewHooksPathConfiguredCheck() *HooksPathConfiguredCheck {
-	return &HooksPathConfiguredCheck{
-		FixableCheck: FixableCheck{
-			BaseCheck: BaseCheck{
-				CheckName:        "hooks-path-configured",
-				CheckDescription: "Check core.hooksPath is set for all clones",
-			},
-		},
-	}
-}
-
-// Run checks if all clones have core.hooksPath configured.
-func (c *HooksPathConfiguredCheck) Run(ctx *CheckContext) *CheckResult {
-	rigPath := ctx.RigPath()
-	if rigPath == "" {
-		return &CheckResult{
-			Name:    c.Name(),
-			Status:  StatusError,
-			Message: "No rig specified",
-		}
-	}
-
-	c.unconfiguredClones = nil
-
-	// Check all clone locations
-	clonePaths := []string{
-		filepath.Join(rigPath, "mayor", "rig"),
-		filepath.Join(rigPath, "refinery", "rig"),
-	}
-
-	// Add crew clones
-	crewDir := filepath.Join(rigPath, "crew")
-	if entries, err := os.ReadDir(crewDir); err == nil {
-		for _, entry := range entries {
-			if entry.IsDir() {
-				clonePaths = append(clonePaths, filepath.Join(crewDir, entry.Name()))
-			}
-		}
-	}
-
-	// Add polecat clones
-	polecatDir := filepath.Join(rigPath, "polecats")
-	if entries, err := os.ReadDir(polecatDir); err == nil {
-		for _, entry := range entries {
-			if entry.IsDir() {
-				clonePaths = append(clonePaths, filepath.Join(polecatDir, entry.Name()))
-			}
-		}
-	}
-
-	for _, clonePath := range clonePaths {
-		// Skip if not a git repo
-		if _, err := os.Stat(filepath.Join(clonePath, ".git")); os.IsNotExist(err) {
-			continue
-		}
-
-		// Skip if no .githooks directory exists
-		if _, err := os.Stat(filepath.Join(clonePath, ".githooks")); os.IsNotExist(err) {
-			continue
-		}
-
-		// Check core.hooksPath
-		cmd := exec.Command("git", "-C", clonePath, "config", "--get", "core.hooksPath")
-		output, err := cmd.Output()
-		if err != nil || strings.TrimSpace(string(output)) != ".githooks" {
-			// Get relative path for cleaner output
-			relPath, _ := filepath.Rel(rigPath, clonePath)
-			if relPath == "" {
-				relPath = clonePath
-			}
-			c.unconfiguredClones = append(c.unconfiguredClones, clonePath)
-		}
-	}
-
-	if len(c.unconfiguredClones) == 0 {
-		return &CheckResult{
-			Name:    c.Name(),
-			Status:  StatusOK,
-			Message: "All clones have hooks configured",
-		}
-	}
-
-	// Build details with relative paths
-	var details []string
-	for _, clonePath := range c.unconfiguredClones {
-		relPath, _ := filepath.Rel(rigPath, clonePath)
-		if relPath == "" {
-			relPath = clonePath
-		}
-		details = append(details, relPath)
-	}
-
-	return &CheckResult{
-		Name:    c.Name(),
-		Status:  StatusWarning,
-		Message: fmt.Sprintf("%d clone(s) missing hooks configuration", len(c.unconfiguredClones)),
-		Details: details,
-		FixHint: "Run 'gt doctor --fix' to configure hooks",
-	}
-}
-
-// Fix configures core.hooksPath for all unconfigured clones.
-func (c *HooksPathConfiguredCheck) Fix(ctx *CheckContext) error {
-	for _, clonePath := range c.unconfiguredClones {
-		cmd := exec.Command("git", "-C", clonePath, "config", "core.hooksPath", ".githooks")
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("failed to configure hooks for %s: %w", clonePath, err)
-		}
-	}
 	return nil
 }
 
@@ -867,225 +745,15 @@ func (c *BeadsConfigValidCheck) Fix(ctx *CheckContext) error {
 	return nil
 }
 
-// BeadsRedirectCheck verifies that rig-level beads redirect exists for tracked beads.
-// When a repo has .beads/ tracked in git (at mayor/rig/.beads), the rig root needs
-// a redirect file pointing to that location.
-type BeadsRedirectCheck struct {
-	FixableCheck
-}
-
-// NewBeadsRedirectCheck creates a new beads redirect check.
-func NewBeadsRedirectCheck() *BeadsRedirectCheck {
-	return &BeadsRedirectCheck{
-		FixableCheck: FixableCheck{
-			BaseCheck: BaseCheck{
-				CheckName:        "beads-redirect",
-				CheckDescription: "Verify rig-level beads redirect for tracked beads",
-			},
-		},
-	}
-}
-
-// Run checks if the rig-level beads redirect exists when needed.
-func (c *BeadsRedirectCheck) Run(ctx *CheckContext) *CheckResult {
-	// Only applies when checking a specific rig
-	if ctx.RigName == "" {
-		return &CheckResult{
-			Name:    c.Name(),
-			Status:  StatusOK,
-			Message: "No rig specified (skipping redirect check)",
-		}
-	}
-
-	rigPath := ctx.RigPath()
-	mayorRigBeads := filepath.Join(rigPath, "mayor", "rig", ".beads")
-	rigBeadsDir := filepath.Join(rigPath, ".beads")
-	redirectPath := filepath.Join(rigBeadsDir, "redirect")
-
-	// Check if this rig has tracked beads (mayor/rig/.beads exists)
-	if _, err := os.Stat(mayorRigBeads); os.IsNotExist(err) {
-		// No tracked beads - check if rig/.beads exists (local beads)
-		if _, err := os.Stat(rigBeadsDir); os.IsNotExist(err) {
-			return &CheckResult{
-				Name:    c.Name(),
-				Status:  StatusError,
-				Message: "No .beads directory found at rig root",
-				Details: []string{
-					"Beads database not initialized for this rig",
-					"This prevents issue tracking for this rig",
-				},
-				FixHint: "Run 'gt doctor --fix --rig " + ctx.RigName + "' to initialize beads",
-			}
-		}
-		return &CheckResult{
-			Name:    c.Name(),
-			Status:  StatusOK,
-			Message: "Rig uses local beads (no redirect needed)",
-		}
-	}
-
-	// Tracked beads exist - check for conflicting local beads
-	hasLocalData := hasBeadsData(rigBeadsDir)
-	redirectExists := false
-	if _, err := os.Stat(redirectPath); err == nil {
-		redirectExists = true
-	}
-
-	// Case: Local beads directory has actual data (not just redirect)
-	if hasLocalData && !redirectExists {
-		return &CheckResult{
-			Name:    c.Name(),
-			Status:  StatusError,
-			Message: "Conflicting local beads found with tracked beads",
-			Details: []string{
-				"Tracked beads exist at: mayor/rig/.beads",
-				"Local beads with data exist at: .beads/",
-				"Fix will remove local beads and create redirect to tracked beads",
-			},
-			FixHint: "Run 'gt doctor --fix --rig " + ctx.RigName + "' to fix",
-		}
-	}
-
-	// Case: No redirect file (but no conflicting data)
-	if !redirectExists {
-		return &CheckResult{
-			Name:    c.Name(),
-			Status:  StatusError,
-			Message: "Missing rig-level beads redirect for tracked beads",
-			Details: []string{
-				"Tracked beads exist at: mayor/rig/.beads",
-				"Missing redirect at: .beads/redirect",
-				"Without this redirect, bd commands from rig root won't find beads",
-			},
-			FixHint: "Run 'gt doctor --fix' to create the redirect",
-		}
-	}
-
-	// Verify redirect points to correct location
-	content, err := os.ReadFile(redirectPath)
-	if err != nil {
-		return &CheckResult{
-			Name:    c.Name(),
-			Status:  StatusWarning,
-			Message: fmt.Sprintf("Could not read redirect file: %v", err),
-		}
-	}
-
-	target := strings.TrimSpace(string(content))
-	if target != "mayor/rig/.beads" {
-		return &CheckResult{
-			Name:    c.Name(),
-			Status:  StatusError,
-			Message: fmt.Sprintf("Redirect points to %q, expected mayor/rig/.beads", target),
-			FixHint: "Run 'gt doctor --fix --rig " + ctx.RigName + "' to correct the redirect",
-		}
-	}
-
-	return &CheckResult{
-		Name:    c.Name(),
-		Status:  StatusOK,
-		Message: "Rig-level beads redirect is correctly configured",
-	}
-}
-
-// Fix creates or corrects the rig-level beads redirect, or initializes beads if missing.
-func (c *BeadsRedirectCheck) Fix(ctx *CheckContext) error {
-	if ctx.RigName == "" {
-		return nil
-	}
-
-	rigPath := ctx.RigPath()
-	mayorRigBeads := filepath.Join(rigPath, "mayor", "rig", ".beads")
-	rigBeadsDir := filepath.Join(rigPath, ".beads")
-	redirectPath := filepath.Join(rigBeadsDir, "redirect")
-
-	// Check if tracked beads exist
-	hasTrackedBeads := true
-	if _, err := os.Stat(mayorRigBeads); os.IsNotExist(err) {
-		hasTrackedBeads = false
-	}
-
-	// Check if local beads exist
-	hasLocalBeads := true
-	if _, err := os.Stat(rigBeadsDir); os.IsNotExist(err) {
-		hasLocalBeads = false
-	}
-
-	// Case 1: No beads at all - initialize with bd init
-	if !hasTrackedBeads && !hasLocalBeads {
-		// Get the rig's beads prefix from rigs.json (falls back to "gt" if not found)
-		prefix := config.GetRigPrefix(ctx.TownRoot, ctx.RigName)
-
-		// Create .beads directory
-		if err := os.MkdirAll(rigBeadsDir, 0755); err != nil {
-			return fmt.Errorf("creating .beads directory: %w", err)
-		}
-
-		// Run bd init with the configured prefix
-		cmd := exec.Command("bd", "init", "--prefix", prefix)
-		cmd.Dir = rigPath
-		if output, err := cmd.CombinedOutput(); err != nil {
-			// bd might not be installed - create minimal config.yaml
-			configPath := filepath.Join(rigBeadsDir, "config.yaml")
-			configContent := fmt.Sprintf("prefix: %s\n", prefix)
-			if writeErr := os.WriteFile(configPath, []byte(configContent), 0644); writeErr != nil {
-				return fmt.Errorf("bd init failed (%v) and fallback config creation failed: %w", err, writeErr)
-			}
-			// Continue - minimal config created
-		} else {
-			_ = output // bd init succeeded
-		}
-		return nil
-	}
-
-	// Case 2: Tracked beads exist - create redirect (may need to remove conflicting local beads)
-	if hasTrackedBeads {
-		// Check if local beads have conflicting data
-		if hasLocalBeads && hasBeadsData(rigBeadsDir) {
-			// Remove conflicting local beads directory
-			if err := os.RemoveAll(rigBeadsDir); err != nil {
-				return fmt.Errorf("removing conflicting local beads: %w", err)
-			}
-		}
-
-		// Create .beads directory if needed
-		if err := os.MkdirAll(rigBeadsDir, 0755); err != nil {
-			return fmt.Errorf("creating .beads directory: %w", err)
-		}
-
-		// Write redirect file
-		if err := os.WriteFile(redirectPath, []byte("mayor/rig/.beads\n"), 0644); err != nil {
-			return fmt.Errorf("writing redirect file: %w", err)
-		}
-	}
-
-	return nil
-}
-
-// hasBeadsData checks if a beads directory has actual data (issues.jsonl, issues.db, config.yaml)
-// as opposed to just being a redirect-only directory.
-func hasBeadsData(beadsDir string) bool {
-	// Check for actual beads data files
-	dataFiles := []string{"issues.jsonl", "issues.db", "config.yaml"}
-	for _, f := range dataFiles {
-		if _, err := os.Stat(filepath.Join(beadsDir, f)); err == nil {
-			return true
-		}
-	}
-	return false
-}
-
 // RigChecks returns all rig-level health checks.
 func RigChecks() []Check {
 	return []Check{
 		NewRigIsGitRepoCheck(),
 		NewGitExcludeConfiguredCheck(),
-		NewHooksPathConfiguredCheck(),
 		NewWitnessExistsCheck(),
 		NewRefineryExistsCheck(),
 		NewMayorCloneExistsCheck(),
 		NewPolecatClonesValidCheck(),
 		NewBeadsConfigValidCheck(),
-		NewBeadsRedirectCheck(),
 	}
 }
