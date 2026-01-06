@@ -85,6 +85,64 @@ Callbacks may spawn new polecats, update issue state, or trigger other actions.
 Keep inbox near-empty - only unprocessed items should remain."""
 
 [[steps]]
+id = "stale-hooked-cleanup"
+title = "Clean up stale hooked beads"
+needs = ["inbox-check"]
+description = """
+Clean up beads that are stuck in hooked status.
+
+**Why this exists:**
+Hooked beads should be transient - a bead is hooked when work is assigned, then
+unhooks when the agent starts executing. Beads stuck in hooked status indicate:
+1. Handoff messages that were processed but not closed
+2. Molecule templates that got stuck in hooked status
+3. Work beads whose agent crashed before processing
+
+**Step 1: Query for stale hooked beads (>6 hours old)**
+```bash
+# List all hooked beads with timestamps
+bd list --status=hooked --all --limit=0 --format='{{.ID}} {{.Type}} {{.Title}} {{.UpdatedAt}}'
+```
+
+Filter for beads updated more than 6 hours ago. Use your judgment on the threshold
+based on town activity - idle towns may have legitimately hooked work overnight.
+
+**Step 2: Categorize and handle each stale bead**
+
+For **message type** (handoffs, mail):
+- These were already processed when read
+- Close them with reason "Processed handoff cleanup":
+```bash
+bd close <id> --reason "Processed handoff cleanup"
+```
+
+For **molecule/epic type** (wisp templates, patrol molecules):
+- Check if the assignee's session is still alive:
+```bash
+tmux has-session -t <session> 2>/dev/null
+```
+- If session dead, close the bead:
+```bash
+bd close <id> --reason "Stale molecule cleanup - session dead"
+```
+- If session alive, leave it (agent may still be working)
+
+For **other types** (task, bug, feature):
+- Check assignee session status
+- If orphaned (no session), return to open status:
+```bash
+bd update <id> --status=open
+```
+- Log for Witness to reassign
+
+**Step 3: Log cleanup actions**
+If any beads were cleaned up, note the count and IDs for audit trail.
+
+**Important:** This is a backstop. The primary fix is ensuring agents properly
+unhook beads when they start work. If you frequently find stale hooked beads,
+investigate why agents aren't clearing hooked status."""
+
+[[steps]]
 id = "trigger-pending-spawns"
 title = "Nudge newly spawned polecats"
 needs = ["inbox-check"]
