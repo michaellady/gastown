@@ -113,9 +113,9 @@ func resolveBeadsDirWithDepth(beadsDir string, maxDepth int) string {
 // cleanBeadsRuntimeFiles removes gitignored runtime files from a .beads directory
 // while preserving tracked files (formulas/, README.md, config.yaml, .gitignore).
 // This is safe to call even if the directory doesn't exist.
-func cleanBeadsRuntimeFiles(beadsDir string) error {
+func cleanBeadsRuntimeFiles(beadsDir string) {
 	if _, err := os.Stat(beadsDir); os.IsNotExist(err) {
-		return nil // Nothing to clean
+		return // Nothing to clean
 	}
 
 	// Runtime files/patterns that are gitignored and safe to remove
@@ -144,11 +144,9 @@ func cleanBeadsRuntimeFiles(beadsDir string) error {
 			continue // Invalid pattern, skip
 		}
 		for _, match := range matches {
-			os.RemoveAll(match) // Best effort, ignore errors
+			_ = os.RemoveAll(match) // Best effort, ignore errors
 		}
 	}
-
-	return nil
 }
 
 // SetupRedirect creates a .beads/redirect file for a worktree to point to the rig's shared beads.
@@ -192,9 +190,7 @@ func SetupRedirect(townRoot, worktreePath string) error {
 
 	// Clean up runtime files in .beads/ but preserve tracked files (formulas/, README.md, etc.)
 	worktreeBeadsDir := filepath.Join(worktreePath, ".beads")
-	if err := cleanBeadsRuntimeFiles(worktreeBeadsDir); err != nil {
-		return fmt.Errorf("cleaning runtime files: %w", err)
-	}
+	cleanBeadsRuntimeFiles(worktreeBeadsDir)
 
 	// Create .beads directory if it doesn't exist
 	if err := os.MkdirAll(worktreeBeadsDir, 0755); err != nil {
