@@ -359,7 +359,7 @@ gt config agent remove <name>     # Remove custom agent (built-ins protected)
 gt config default-agent [name]    # Get or set town default agent
 ```
 
-**Built-in agents**: `claude`, `gemini`, `codex`
+**Built-in agents**: `claude`, `gemini`, `codex`, `cursor`, `auggie`, `amp`
 
 **Custom agents**: Define per-town in `mayor/town.json`:
 ```bash

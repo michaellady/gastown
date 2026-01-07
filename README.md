@@ -274,11 +274,13 @@ gt crew add <name> --rig <rig>  # Create crew workspace
 ```bash
 gt agents                   # List active agents
 gt sling <issue> <rig>      # Assign work to agent
-gt sling <issue> <rig> --agent codex    # Override runtime for this sling/spawn
+gt sling <issue> <rig> --agent cursor   # Override runtime for this sling/spawn
 gt mayor attach             # Start Mayor session
-gt mayor start --agent gemini           # Run Mayor with a specific agent alias
+gt mayor start --agent auggie           # Run Mayor with a specific agent alias
 gt prime                    # Alternative to mayor attach
 ```
+
+**Built-in agent presets**: `claude`, `gemini`, `codex`, `cursor`, `auggie`, `amp`
 
 ### Convoy (Work Tracking)
 
