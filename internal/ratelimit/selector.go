@@ -26,18 +26,24 @@ type Selector interface {
 }
 
 // DefaultSelector implements profile selection with cooldown tracking.
+// It composes CooldownStore for cooldown management.
 type DefaultSelector struct {
-	mu        sync.RWMutex
-	cooldowns map[string]time.Time // profile -> cooldown expiry
-	policies  map[string]*RolePolicy
+	mu       sync.RWMutex
+	store    *CooldownStore
+	policies map[string]*RolePolicy
 }
 
-// NewSelector creates a new profile selector.
-func NewSelector() *DefaultSelector {
-	return &DefaultSelector{
-		cooldowns: make(map[string]time.Time),
-		policies:  make(map[string]*RolePolicy),
+// NewSelector creates a new profile selector with optional initial policies.
+func NewSelector(policies map[string]*RolePolicy) *DefaultSelector {
+	s := &DefaultSelector{
+		store:    NewCooldownStore(),
+		policies: make(map[string]*RolePolicy),
 	}
+	// Copy provided policies
+	for role, policy := range policies {
+		s.policies[role] = policy
+	}
+	return s
 }
 
 // SetPolicy configures a role's fallback policy.
@@ -66,17 +72,14 @@ func (s *DefaultSelector) SelectNext(role string, currentProfile string, event *
 	if cooldownDuration == 0 {
 		cooldownDuration = 5 * time.Minute
 	}
-	s.cooldowns[currentProfile] = time.Now().Add(cooldownDuration)
+	s.store.MarkCooldown(currentProfile, time.Now().Add(cooldownDuration))
 
 	// Find next available profile in the chain
-	now := time.Now()
 	for _, profile := range policy.FallbackChain {
 		if profile == currentProfile {
 			continue // Skip current profile
 		}
-		expiry, inCooldown := s.cooldowns[profile]
-		if !inCooldown || now.After(expiry) {
-			// This profile is available
+		if s.store.IsAvailable(profile) {
 			return profile, nil
 		}
 	}
@@ -86,26 +89,15 @@ func (s *DefaultSelector) SelectNext(role string, currentProfile string, event *
 
 // MarkCooldown marks a profile as cooling down until the specified time.
 func (s *DefaultSelector) MarkCooldown(profile string, until time.Time) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.cooldowns[profile] = until
+	s.store.MarkCooldown(profile, until)
 }
 
 // IsAvailable checks if a profile is available (not cooling down).
 func (s *DefaultSelector) IsAvailable(profile string) bool {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	expiry, exists := s.cooldowns[profile]
-	if !exists {
-		return true
-	}
-	return time.Now().After(expiry)
+	return s.store.IsAvailable(profile)
 }
 
 // ClearCooldown removes a profile from cooldown (for testing).
 func (s *DefaultSelector) ClearCooldown(profile string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.cooldowns, profile)
+	s.store.ClearCooldown(profile)
 }

@@ -33,9 +33,13 @@ type DefaultDetector struct {
 	provider string
 }
 
-// NewDetector creates a new rate limit detector.
-func NewDetector() *DefaultDetector {
-	return &DefaultDetector{}
+// NewDetector creates a new rate limit detector with optional agent context.
+// If agentID and profile are provided, they're used for event creation.
+func NewDetector(agentID, profile string) *DefaultDetector {
+	return &DefaultDetector{
+		agentID: agentID,
+		profile: profile,
+	}
 }
 
 // SetAgentInfo configures the agent context for event creation.

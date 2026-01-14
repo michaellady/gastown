@@ -6,7 +6,7 @@ import (
 )
 
 func TestSelector_SelectNext_FirstAvailable(t *testing.T) {
-	s := NewSelector()
+	s := NewSelector(nil)
 	s.SetPolicy("polecat", RolePolicy{
 		FallbackChain:   []string{"anthropic_a", "openai_a", "anthropic_b"},
 		CooldownMinutes: 5,
@@ -23,7 +23,7 @@ func TestSelector_SelectNext_FirstAvailable(t *testing.T) {
 }
 
 func TestSelector_SelectNext_SkipsCoolingDown(t *testing.T) {
-	s := NewSelector()
+	s := NewSelector(nil)
 	s.SetPolicy("polecat", RolePolicy{
 		FallbackChain:   []string{"anthropic_a", "openai_a", "anthropic_b"},
 		CooldownMinutes: 5,
@@ -44,7 +44,7 @@ func TestSelector_SelectNext_SkipsCoolingDown(t *testing.T) {
 }
 
 func TestSelector_SelectNext_AllCooling(t *testing.T) {
-	s := NewSelector()
+	s := NewSelector(nil)
 	s.SetPolicy("polecat", RolePolicy{
 		FallbackChain:   []string{"anthropic_a", "openai_a"},
 		CooldownMinutes: 5,
@@ -61,7 +61,7 @@ func TestSelector_SelectNext_AllCooling(t *testing.T) {
 }
 
 func TestSelector_SelectNext_RespectsOrder(t *testing.T) {
-	s := NewSelector()
+	s := NewSelector(nil)
 	s.SetPolicy("polecat", RolePolicy{
 		FallbackChain:   []string{"preferred", "backup1", "backup2"},
 		CooldownMinutes: 5,
@@ -79,7 +79,7 @@ func TestSelector_SelectNext_RespectsOrder(t *testing.T) {
 }
 
 func TestSelector_IsAvailable(t *testing.T) {
-	s := NewSelector()
+	s := NewSelector(nil)
 
 	// Fresh profile should be available
 	if !s.IsAvailable("test_profile") {
@@ -100,7 +100,7 @@ func TestSelector_IsAvailable(t *testing.T) {
 }
 
 func TestSelector_MarkCooldown(t *testing.T) {
-	s := NewSelector()
+	s := NewSelector(nil)
 
 	future := time.Now().Add(10 * time.Minute)
 	s.MarkCooldown("test_profile", future)
@@ -111,7 +111,7 @@ func TestSelector_MarkCooldown(t *testing.T) {
 }
 
 func TestSelector_ClearCooldown(t *testing.T) {
-	s := NewSelector()
+	s := NewSelector(nil)
 
 	s.MarkCooldown("test_profile", time.Now().Add(10*time.Minute))
 	if s.IsAvailable("test_profile") {
@@ -126,7 +126,7 @@ func TestSelector_ClearCooldown(t *testing.T) {
 
 func TestSelector_DefaultPolicy(t *testing.T) {
 	// No policies defined
-	s := NewSelector()
+	s := NewSelector(nil)
 
 	event := &RateLimitEvent{Profile: "unknown_profile"}
 	_, err := s.SelectNext("unknown_role", "unknown_profile", event)

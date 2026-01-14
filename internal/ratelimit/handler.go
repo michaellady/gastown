@@ -2,9 +2,54 @@ package ratelimit
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log"
 	"time"
 )
+
+// Logger defines the interface for structured logging in the rate limit handler.
+type Logger interface {
+	// Info logs informational messages with structured key-value pairs.
+	Info(msg string, keysAndValues ...any)
+	// Warn logs warning messages with structured key-value pairs.
+	Warn(msg string, keysAndValues ...any)
+	// Error logs error messages with structured key-value pairs.
+	Error(msg string, keysAndValues ...any)
+}
+
+// DefaultLogger is a simple logger implementation using the standard log package.
+type DefaultLogger struct{}
+
+// Info logs informational messages.
+func (l *DefaultLogger) Info(msg string, keysAndValues ...any) {
+	log.Printf("[INFO] %s %v", msg, formatKV(keysAndValues))
+}
+
+// Warn logs warning messages.
+func (l *DefaultLogger) Warn(msg string, keysAndValues ...any) {
+	log.Printf("[WARN] %s %v", msg, formatKV(keysAndValues))
+}
+
+// Error logs error messages.
+func (l *DefaultLogger) Error(msg string, keysAndValues ...any) {
+	log.Printf("[ERROR] %s %v", msg, formatKV(keysAndValues))
+}
+
+// formatKV formats key-value pairs for logging.
+func formatKV(keysAndValues []any) string {
+	if len(keysAndValues) == 0 {
+		return ""
+	}
+	result := ""
+	for i := 0; i < len(keysAndValues)-1; i += 2 {
+		if i > 0 {
+			result += " "
+		}
+		result += fmt.Sprintf("%v=%v", keysAndValues[i], keysAndValues[i+1])
+	}
+	return result
+}
 
 // Handler orchestrates rate limit detection, profile selection, and session swapping.
 // It is the main integration point for the Witness's rate limit handling.
@@ -13,6 +58,7 @@ type Handler struct {
 	selector   Selector
 	swapper    Swapper
 	controller SessionController
+	logger     Logger
 }
 
 // HandlerConfig contains configuration for the rate limit handler.
@@ -22,17 +68,27 @@ type HandlerConfig struct {
 
 	// RolePolicies maps roles to their profile fallback policies.
 	RolePolicies map[string]RolePolicy
+
+	// Logger is an optional structured logger. If nil, DefaultLogger is used.
+	Logger Logger
 }
 
 // NewHandler creates a new rate limit handler with the given configuration.
 func NewHandler(controller SessionController, cfg HandlerConfig) *Handler {
-	detector := NewDetector()
-	selector := NewSelector()
+	detector := NewDetector("", "") // Agent info set per-call via SetAgentInfo
+
+	// Convert RolePolicies to pointer map for NewSelector
+	policies := make(map[string]*RolePolicy)
+	for role, policy := range cfg.RolePolicies {
+		p := policy // Copy to avoid aliasing
+		policies[role] = &p
+	}
+	selector := NewSelector(policies)
 	swapper := NewSwapper(controller)
 
-	// Configure role policies
-	for role, policy := range cfg.RolePolicies {
-		selector.SetPolicy(role, policy)
+	logger := cfg.Logger
+	if logger == nil {
+		logger = &DefaultLogger{}
 	}
 
 	h := &Handler{
@@ -40,6 +96,7 @@ func NewHandler(controller SessionController, cfg HandlerConfig) *Handler {
 		selector:   selector,
 		swapper:    swapper,
 		controller: controller,
+		logger:     logger,
 	}
 	return h
 }
@@ -87,14 +144,14 @@ func (h *Handler) HandlePolecatExit(ctx context.Context, exitInfo PolecatExitInf
 	result.Event = event
 
 	// Log the rate limit event
-	logRateLimitEvent(event)
+	h.logRateLimitEvent(event)
 
 	// Step 2: Select fallback profile
 	newProfile, err := h.selector.SelectNext("polecat", exitInfo.CurrentProfile, event)
 	if err != nil {
-		if err == ErrAllProfilesCooling {
+		if errors.Is(err, ErrAllProfilesCooling) {
 			result.AllProfilesCooling = true
-			alertNoProfilesAvailable(exitInfo, event)
+			h.alertNoProfilesAvailable(exitInfo, event)
 			return result
 		}
 		result.Error = fmt.Errorf("selecting fallback profile: %w", err)
@@ -162,22 +219,26 @@ func (h *Handler) SetPolicy(role string, policy RolePolicy) {
 }
 
 // logRateLimitEvent logs a rate limit event for observability.
-func logRateLimitEvent(event *RateLimitEvent) {
-	fmt.Printf("[RATE_LIMIT] Agent: %s, Profile: %s, Provider: %s, ExitCode: %d, Time: %s\n",
-		event.AgentID, event.Profile, event.Provider, event.ExitCode,
-		event.Timestamp.Format(time.RFC3339))
-	if event.ErrorSnippet != "" {
-		fmt.Printf("[RATE_LIMIT] Error: %s\n", event.ErrorSnippet)
-	}
+func (h *Handler) logRateLimitEvent(event *RateLimitEvent) {
+	h.logger.Info("rate limit detected",
+		"agent", event.AgentID,
+		"profile", event.Profile,
+		"provider", event.Provider,
+		"exit_code", event.ExitCode,
+		"timestamp", event.Timestamp.Format(time.RFC3339),
+		"error", event.ErrorSnippet,
+	)
 }
 
 // alertNoProfilesAvailable emits an alert when all profiles are cooling down.
-func alertNoProfilesAvailable(exitInfo PolecatExitInfo, event *RateLimitEvent) {
-	fmt.Printf("[ALERT] All profiles cooling! Agent: %s/%s cannot continue\n",
-		exitInfo.RigName, exitInfo.PolecatName)
-	fmt.Printf("[ALERT] Last profile: %s, Rate limit at: %s\n",
-		event.Profile, event.Timestamp.Format(time.RFC3339))
-	fmt.Printf("[ALERT] Work at risk: %s\n", exitInfo.HookedWork)
+func (h *Handler) alertNoProfilesAvailable(exitInfo PolecatExitInfo, event *RateLimitEvent) {
+	h.logger.Error("all profiles cooling - agent cannot continue",
+		"rig", exitInfo.RigName,
+		"polecat", exitInfo.PolecatName,
+		"last_profile", event.Profile,
+		"rate_limit_time", event.Timestamp.Format(time.RFC3339),
+		"hooked_work", exitInfo.HookedWork,
+	)
 	// In a full implementation, this would:
 	// 1. Send mail to Witness/Mayor for escalation
 	// 2. Create an alert bead for tracking

@@ -1,10 +1,10 @@
 package ratelimit
 
 import (
+	"encoding/json"
 	"fmt"
 	"os/exec"
 	"path/filepath"
-	"strings"
 
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/git"
@@ -100,6 +100,11 @@ func (a *SessionAdapter) Start(rigName, polecatName, profile string) (string, er
 	return sessionID, nil
 }
 
+// beadEntry represents a bead in JSON output from bd list.
+type beadEntry struct {
+	ID string `json:"id"`
+}
+
 // GetHookedWork returns the bead ID of work currently hooked to the polecat.
 func (a *SessionAdapter) GetHookedWork(rigName, polecatName string) (string, error) {
 	_, r, err := a.getSessionManager(rigName)
@@ -107,7 +112,7 @@ func (a *SessionAdapter) GetHookedWork(rigName, polecatName string) (string, err
 		return "", err
 	}
 
-	// Run bd hook show to get hooked work
+	// Run bd list to get hooked work
 	agentID := fmt.Sprintf("%s/polecats/%s", rigName, polecatName)
 	cmd := exec.Command("bd", "list", "--json", "--status=hooked", "--assignee="+agentID) //nolint:gosec
 	cmd.Dir = r.Path
@@ -116,19 +121,15 @@ func (a *SessionAdapter) GetHookedWork(rigName, polecatName string) (string, err
 		return "", nil // No hooked work is not an error
 	}
 
-	// Parse first hooked bead ID from output
-	// Simple approach: look for "id" field in JSON
-	outputStr := string(output)
-	if strings.Contains(outputStr, `"id"`) {
-		// Extract ID - basic parsing
-		start := strings.Index(outputStr, `"id":"`)
-		if start >= 0 {
-			start += 6
-			end := strings.Index(outputStr[start:], `"`)
-			if end >= 0 {
-				return outputStr[start : start+end], nil
-			}
-		}
+	// Parse JSON output to extract bead ID
+	var beads []beadEntry
+	if err := json.Unmarshal(output, &beads); err != nil {
+		// JSON parse error - log and return empty (non-fatal)
+		return "", fmt.Errorf("parsing hooked work JSON: %w", err)
+	}
+
+	if len(beads) > 0 {
+		return beads[0].ID, nil
 	}
 
 	return "", nil

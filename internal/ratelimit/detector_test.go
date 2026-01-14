@@ -5,7 +5,7 @@ import (
 )
 
 func TestDetector_ExitCode2(t *testing.T) {
-	d := NewDetector()
+	d := NewDetector("", "")
 	d.SetAgentInfo("test-agent", "anthropic_main", "")
 
 	event, detected := d.Detect(ExitCodeRateLimit, "")
@@ -43,7 +43,7 @@ func TestDetector_StderrPatterns(t *testing.T) {
 		{"empty stderr", "", false},
 	}
 
-	d := NewDetector()
+	d := NewDetector("", "")
 	d.SetAgentInfo("test-agent", "test_profile", "")
 
 	for _, tc := range tests {
@@ -57,7 +57,7 @@ func TestDetector_StderrPatterns(t *testing.T) {
 }
 
 func TestDetector_NoRateLimit(t *testing.T) {
-	d := NewDetector()
+	d := NewDetector("", "")
 	d.SetAgentInfo("test-agent", "test_profile", "")
 
 	tests := []struct {
@@ -84,7 +84,7 @@ func TestDetector_NoRateLimit(t *testing.T) {
 }
 
 func TestDetector_ProviderDetection(t *testing.T) {
-	d := NewDetector()
+	d := NewDetector("", "")
 	d.SetAgentInfo("test-agent", "test_profile", "")
 
 	tests := []struct {
