@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -42,7 +43,7 @@ func (d *Daemon) ProcessLifecycleRequests() {
 
 	output, err := cmd.Output()
 	if err != nil {
-		// gt mail might not be available or inbox empty
+		d.logger.Printf("Warning: failed to fetch deacon inbox: %v", err)
 		return
 	}
 
@@ -563,26 +564,52 @@ func (d *Daemon) syncWorkspace(workDir string) {
 		}
 	}
 
+	// Capture stderr for debuggability
+	var stderr bytes.Buffer
+
 	// Fetch latest from origin
 	fetchCmd := exec.Command("git", "fetch", "origin")
 	fetchCmd.Dir = workDir
+	fetchCmd.Stderr = &stderr
 	if err := fetchCmd.Run(); err != nil {
-		d.logger.Printf("Warning: git fetch failed in %s: %v", workDir, err)
+		errMsg := strings.TrimSpace(stderr.String())
+		if errMsg == "" {
+			errMsg = err.Error()
+		}
+		d.logger.Printf("Error: git fetch failed in %s: %s", workDir, errMsg)
+		return // Fail fast - don't start agent with stale code
 	}
+
+	// Reset stderr buffer
+	stderr.Reset()
 
 	// Pull with rebase to incorporate changes
 	pullCmd := exec.Command("git", "pull", "--rebase", "origin", defaultBranch)
 	pullCmd.Dir = workDir
+	pullCmd.Stderr = &stderr
 	if err := pullCmd.Run(); err != nil {
-		d.logger.Printf("Warning: git pull failed in %s: %v", workDir, err)
+		errMsg := strings.TrimSpace(stderr.String())
+		if errMsg == "" {
+			errMsg = err.Error()
+		}
+		d.logger.Printf("Warning: git pull failed in %s: %s (agent may have conflicts)", workDir, errMsg)
 		// Don't fail - agent can handle conflicts
 	}
+
+	// Reset stderr buffer
+	stderr.Reset()
 
 	// Sync beads
 	bdCmd := exec.Command("bd", "sync")
 	bdCmd.Dir = workDir
+	bdCmd.Stderr = &stderr
 	if err := bdCmd.Run(); err != nil {
-		d.logger.Printf("Warning: bd sync failed in %s: %v", workDir, err)
+		errMsg := strings.TrimSpace(stderr.String())
+		if errMsg == "" {
+			errMsg = err.Error()
+		}
+		d.logger.Printf("Warning: bd sync failed in %s: %s", workDir, errMsg)
+		// Don't fail - sync issues may be recoverable
 	}
 }
 
@@ -771,7 +798,8 @@ func (d *Daemon) checkRigGUPPViolations(rigName string) {
 
 	output, err := cmd.Output()
 	if err != nil {
-		return // Silently fail - bd might not be available
+		d.logger.Printf("Warning: bd list failed for GUPP check: %v", err)
+		return
 	}
 
 	var agents []struct {
@@ -868,6 +896,7 @@ func (d *Daemon) checkRigOrphanedWork(rigName string) {
 
 	output, err := cmd.Output()
 	if err != nil {
+		d.logger.Printf("Warning: bd list failed for orphaned work check: %v", err)
 		return
 	}
 
