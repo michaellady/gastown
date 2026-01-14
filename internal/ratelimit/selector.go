@@ -9,13 +9,6 @@ var (
 	ErrEmptyFallbackChain     = errors.New("fallback chain is empty")
 )
 
-// RolePolicy defines the profile selection policy for a role.
-type RolePolicy struct {
-	FallbackChain   []string // Profile names in priority order
-	CooldownMinutes int      // How long to wait after rate limit
-	Stickiness      string   // Preferred provider (optional)
-}
-
 // Selector selects the next available profile based on the policy.
 type Selector interface {
 	// SelectNext returns the next available profile for the role
