@@ -460,6 +460,7 @@ func addTracksDep(convoyID, issueID, dir string) error {
 	if err := BdCmd("dep", "add", convoyID, issueID, "--type=tracks").
 		WithAutoCommit().
 		Dir(dir).
+		StripBeadsDir().
 		Stderr(&depStderr).
 		Run(); err != nil {
 		errMsg := strings.TrimSpace(depStderr.String())
@@ -483,7 +484,7 @@ func addTracksDep(convoyID, issueID, dir string) error {
 			"INSERT INTO dependencies (issue_id, depends_on_id, type, created_at, created_by, metadata) "+
 				"VALUES ('%s', '%s', 'tracks', NOW(), '%s', '{}')",
 			convoyID, issueID, actor)
-		if _, sqlErr := BdCmd("sql", sqlQuery).Dir(dir).WithAutoCommit().CombinedOutput(); sqlErr != nil {
+		if _, sqlErr := BdCmd("sql", sqlQuery).Dir(dir).WithAutoCommit().StripBeadsDir().CombinedOutput(); sqlErr != nil {
 			return fmt.Errorf("%s", errMsg)
 		}
 	}
