@@ -29,8 +29,12 @@ func TestGenerateShortID_ValidChars(t *testing.T) {
 }
 
 func TestGenerateShortID_Uniqueness(t *testing.T) {
+	// With 5-char base36 (~60M possible values), birthday paradox gives ~0.82%
+	// collision probability at 1000 IDs. Use 500 IDs to keep probability well
+	// below 0.5%, avoiding flaky failures in CI while still validating that
+	// the RNG produces reasonably distributed output.
 	seen := make(map[string]bool)
-	const n = 1000
+	const n = 500
 	for i := 0; i < n; i++ {
 		id := generateShortID()
 		if seen[id] {

@@ -29,14 +29,28 @@ import (
 // generateShortID generates a collision-resistant convoy ID suffix using base36.
 // 5 chars of base36 gives ~60M possible values (36^5 = 60,466,176).
 // Birthday paradox: ~1% collision at ~1,100 IDs — safe for convoy volumes. (#2063)
+//
+// Uses rejection sampling to eliminate modulo bias: since 256 % 36 = 4,
+// naive modulo makes the first 4 characters ~14% more likely, reducing
+// effective entropy and increasing collision probability in practice.
 func generateShortID() string {
 	const alphabet = "0123456789abcdefghijklmnopqrstuvwxyz"
-	b := make([]byte, 5)
-	_, _ = rand.Read(b)
-	for i := range b {
-		b[i] = alphabet[int(b[i])%len(alphabet)]
+	const maxUnbiased = 252 // largest multiple of 36 that fits in a byte (36*7=252)
+	result := make([]byte, 5)
+	buf := make([]byte, 10) // read extra bytes to handle rejections
+	for i := 0; i < 5; {
+		_, _ = rand.Read(buf)
+		for _, b := range buf {
+			if b < maxUnbiased {
+				result[i] = alphabet[b%36]
+				i++
+				if i >= 5 {
+					break
+				}
+			}
+		}
 	}
-	return string(b)
+	return string(result)
 }
 
 // looksLikeIssueID checks if a string looks like a beads issue ID.

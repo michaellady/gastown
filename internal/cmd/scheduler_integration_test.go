@@ -25,6 +25,7 @@ import (
 
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
+	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/scheduler/capacity"
 )
 
@@ -52,6 +53,15 @@ func initBeadsDBForServer(t *testing.T, dir, prefix string) {
 	t.Logf("bd init --prefix %s in %s: exit=%v\n%s", prefix, dir, err, out)
 	if err != nil {
 		t.Fatalf("bd init failed in %s: %v\n%s", dir, err, out)
+	}
+
+	// Register custom types so bd create --type=convoy (and other Gas Town types) works.
+	// bd v0.59.0+ requires explicit types.custom config for non-built-in types.
+	configCmd := exec.Command("bd", "config", "set", "types.custom", constants.BeadsCustomTypes)
+	configCmd.Dir = dir
+	if configOut, configErr := configCmd.CombinedOutput(); configErr != nil {
+		t.Logf("bd config set types.custom in %s: exit=%v\n%s", dir, configErr, configOut)
+		// Non-fatal: older bd versions may not need this
 	}
 
 	// Create empty issues.jsonl to prevent bd auto-export from corrupting
