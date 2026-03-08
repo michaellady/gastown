@@ -394,6 +394,13 @@ func (t *Tmux) checkSessionAfterCreate(name, command string) error {
 		return err
 	}
 
+	// Fourth check at 1750ms: catches exec failures on extremely slow CI runners
+	// where the third check at 750ms is still not enough.
+	time.Sleep(1000 * time.Millisecond)
+	if dead, err := checkPaneDead(); dead {
+		return err
+	}
+
 	// Pane is alive — restore default (no need to keep dead sessions around)
 	_, _ = t.run("set-option", "-t", name, "remain-on-exit", "off")
 	return nil

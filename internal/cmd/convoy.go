@@ -462,7 +462,19 @@ func addTracksDep(convoyID, issueID, dir string) error {
 		Dir(dir).
 		Stderr(&depStderr).
 		Run(); err != nil {
-		// Fallback: SQL INSERT for cross-DB deps
+		errMsg := strings.TrimSpace(depStderr.String())
+		if errMsg == "" {
+			errMsg = err.Error()
+		}
+		// Only fall back to SQL INSERT for cross-DB dep errors where the
+		// target bead doesn't exist in the local DB (bd v0.59.0+).
+		// Other errors (e.g., permission, syntax) should propagate.
+		isCrossDBErr := strings.Contains(errMsg, "not found") ||
+			strings.Contains(errMsg, "does not exist") ||
+			strings.Contains(errMsg, "unknown issue")
+		if !isCrossDBErr {
+			return fmt.Errorf("%s", errMsg)
+		}
 		actor := os.Getenv("BD_ACTOR")
 		if actor == "" {
 			actor = "gt"
@@ -472,10 +484,6 @@ func addTracksDep(convoyID, issueID, dir string) error {
 				"VALUES ('%s', '%s', 'tracks', NOW(), '%s', '{}')",
 			convoyID, issueID, actor)
 		if _, sqlErr := BdCmd("sql", sqlQuery).Dir(dir).WithAutoCommit().CombinedOutput(); sqlErr != nil {
-			errMsg := strings.TrimSpace(depStderr.String())
-			if errMsg == "" {
-				errMsg = err.Error()
-			}
 			return fmt.Errorf("%s", errMsg)
 		}
 	}

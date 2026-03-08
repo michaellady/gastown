@@ -230,6 +230,7 @@ func addBeadDependencyOfType(t *testing.T, from, to, depType, dir string) {
 	// Try bd dep add first (works when both beads are in the same DB).
 	cmd := exec.Command("bd", "dep", "add", from, to, "--type="+depType)
 	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "BD_DOLT_AUTO_COMMIT=on")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		// Fallback: use bd sql INSERT for cross-DB deps where the target
 		// bead doesn't exist in the local DB (bd v0.59.0+ validates this).
@@ -239,6 +240,7 @@ func addBeadDependencyOfType(t *testing.T, from, to, depType, dir string) {
 			from, to, depType)
 		sqlCmd := exec.Command("bd", "sql", sqlQuery)
 		sqlCmd.Dir = dir
+		sqlCmd.Env = append(os.Environ(), "BD_DOLT_AUTO_COMMIT=on")
 		if sqlOut, sqlErr := sqlCmd.CombinedOutput(); sqlErr != nil {
 			t.Fatalf("bd dep add %s %s --type=%s failed: %v\n%s\nSQL fallback also failed: %v\n%s",
 				from, to, depType, err, out, sqlErr, sqlOut)
