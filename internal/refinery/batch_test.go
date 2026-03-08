@@ -470,6 +470,9 @@ func TestProcessBatch_WithConflict(t *testing.T) {
 }
 
 func TestProcessBatch_GateFailure_BisectsToFindCulprit(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("gate commands use shell syntax not available on Windows CI (MSYS2)")
+	}
 	workDir, g, cleanup := testGitRepo(t)
 	defer cleanup()
 
@@ -656,6 +659,9 @@ func TestBisectBatch_TwoMRs_SecondBad(t *testing.T) {
 }
 
 func TestBisectBatch_TwoMRs_FirstBad(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("gate commands use shell syntax not available on Windows CI (MSYS2)")
+	}
 	workDir, g, cleanup := testGitRepo(t)
 	defer cleanup()
 
@@ -682,6 +688,9 @@ func TestBisectBatch_TwoMRs_FirstBad(t *testing.T) {
 }
 
 func TestBisectBatch_FourMRs_ThirdBad(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("gate commands use shell syntax not available on Windows CI (MSYS2)")
+	}
 	workDir, g, cleanup := testGitRepo(t)
 	defer cleanup()
 
@@ -750,6 +759,9 @@ func TestProcessBatch_PushesAndLands(t *testing.T) {
 }
 
 func TestProcessBatch_BisectAndMergeGood(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("gate commands use shell syntax not available on Windows CI (MSYS2)")
+	}
 	workDir, g, cleanup := testGitRepo(t)
 	defer cleanup()
 
