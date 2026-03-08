@@ -62,6 +62,23 @@ func MaybePrependAllowStale(args []string) []string {
 	return args
 }
 
+// bdFlatOnce caches whether the installed bd supports --flat.
+var (
+	bdFlatOnce   sync.Once
+	bdFlatResult bool
+)
+
+// bdSupportsFlat returns true if the installed bd binary accepts --flat.
+func bdSupportsFlat() bool {
+	bdFlatOnce.Do(func() {
+		cmd := exec.Command("bd", "list", "--flat", "--json", "--limit=0") //nolint:gosec // G204: bd is a trusted internal tool
+		if err := cmd.Run(); err == nil {
+			bdFlatResult = true
+		}
+	})
+	return bdFlatResult
+}
+
 // ExtractIssueID strips the external:prefix:id wrapper from bead IDs.
 // bd dep add wraps cross-rig IDs as "external:prefix:id" for routing,
 // but consumers need the raw bead ID for display and lookups.
@@ -544,7 +561,11 @@ func stripEnvPrefixes(environ []string, prefixes ...string) []string {
 func (b *Beads) List(opts ListOptions) ([]*Issue, error) {
 	// --flat is required because bd's default tree mode doesn't output valid JSON
 	// even when --json is specified. This was introduced when bd added tree view.
-	args := []string{"list", "--json", "--flat"}
+	// Only pass --flat if the installed bd supports it (added in bd >=0.58).
+	args := []string{"list", "--json"}
+	if bdSupportsFlat() {
+		args = append(args, "--flat")
+	}
 
 	if opts.Status != "" {
 		args = append(args, "--status="+opts.Status)
