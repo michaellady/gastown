@@ -79,6 +79,26 @@ func bdSupportsFlat() bool {
 	return bdFlatResult
 }
 
+// maybeInjectFlat adds --flat after "list" if not already present.
+func maybeInjectFlat(args []string) []string {
+	for _, a := range args {
+		if a == "--flat" {
+			return args
+		}
+	}
+	// Insert --flat right after "list"
+	for i, a := range args {
+		if a == "list" {
+			result := make([]string, 0, len(args)+1)
+			result = append(result, args[:i+1]...)
+			result = append(result, "--flat")
+			result = append(result, args[i+1:]...)
+			return result
+		}
+	}
+	return args
+}
+
 // ExtractIssueID strips the external:prefix:id wrapper from bead IDs.
 // bd dep add wraps cross-rig IDs as "external:prefix:id" for routing,
 // but consumers need the raw bead ID for display and lookups.
@@ -338,6 +358,12 @@ func (b *Beads) run(args ...string) (_ []byte, retErr error) {
 	// (e.g., after daemon is killed during shutdown). Only if bd supports it.
 	fullArgs := MaybePrependAllowStale(args)
 
+	// Inject --flat for list commands when bd supports it. bd's tree mode
+	// outputs non-JSON even with --json; --flat ensures valid JSON output.
+	if len(args) > 0 && args[0] == "list" && bdSupportsFlat() {
+		fullArgs = maybeInjectFlat(fullArgs)
+	}
+
 	// Always explicitly set BEADS_DIR to prevent inherited env vars from
 	// causing prefix mismatches. Use explicit beadsDir if set, otherwise
 	// resolve from working directory.
@@ -559,13 +585,8 @@ func stripEnvPrefixes(environ []string, prefixes ...string) []string {
 
 // List returns issues matching the given options.
 func (b *Beads) List(opts ListOptions) ([]*Issue, error) {
-	// --flat is required because bd's default tree mode doesn't output valid JSON
-	// even when --json is specified. This was introduced when bd added tree view.
-	// Only pass --flat if the installed bd supports it (added in bd >=0.58).
+	// --flat is injected automatically by run() when bd supports it.
 	args := []string{"list", "--json"}
-	if bdSupportsFlat() {
-		args = append(args, "--flat")
-	}
 
 	if opts.Status != "" {
 		args = append(args, "--status="+opts.Status)
