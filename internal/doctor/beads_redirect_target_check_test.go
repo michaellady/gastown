@@ -616,9 +616,6 @@ func TestBeadsRedirectTargetCheck_FixWithMissingConfigYaml(t *testing.T) {
 }
 
 func TestBeadsRedirectTargetCheck_FixMetadataRepairFails(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("chmod-based permission restrictions don't apply on Windows")
-	}
 	// Target directory exists but metadata repair can't fix it (no metadata.json,
 	// and the directory is writable so EnsureConfigYAML succeeds but with empty
 	// fallback prefix — the important thing is the fallback path works).
@@ -635,11 +632,22 @@ func TestBeadsRedirectTargetCheck_FixMetadataRepairFails(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(rigDir, ".git"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	// Make beads dir read-only so EnsureConfigYAMLFromMetadataIfMissing fails
-	if err := os.Chmod(rigBeadsDir, 0555); err != nil {
-		t.Fatal(err)
+	if runtime.GOOS == "windows" {
+		// On Windows, chmod doesn't restrict directory writes.
+		// Create a directory at config.yaml's path so os.WriteFile fails.
+		if err := os.MkdirAll(filepath.Join(rigBeadsDir, "config.yaml"), 0755); err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		if os.Getuid() == 0 {
+			t.Skip("running as root; chmod restrictions do not apply")
+		}
+		// Make beads dir read-only so EnsureConfigYAMLFromMetadataIfMissing fails
+		if err := os.Chmod(rigBeadsDir, 0555); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { os.Chmod(rigBeadsDir, 0755) })
 	}
-	t.Cleanup(func() { os.Chmod(rigBeadsDir, 0755) })
 
 	// Create crew with redirect to the unwritable beads dir
 	if err := os.MkdirAll(crewBeadsDir, 0755); err != nil {

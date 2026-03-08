@@ -123,30 +123,35 @@ func TestInstallForRole_EmptyProvider(t *testing.T) {
 }
 
 func TestInstallForRole_Permissions(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Unix file permissions not supported on Windows")
-	}
 	dir := t.TempDir()
 
-	// JSON files should get 0600
+	// JSON files should get 0600 (on Windows: 0666 since NTFS ignores Unix bits)
 	err := InstallForRole("claude", dir, dir, "crew", ".claude", "settings.json", true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	info, _ := os.Stat(filepath.Join(dir, ".claude", "settings.json"))
-	if info.Mode().Perm() != 0600 {
-		t.Errorf("JSON file perm = %o, want 0600", info.Mode().Perm())
+	wantJSON := os.FileMode(0600)
+	if runtime.GOOS == "windows" {
+		wantJSON = 0666
+	}
+	if info.Mode().Perm() != wantJSON {
+		t.Errorf("JSON file perm = %o, want %o", info.Mode().Perm(), wantJSON)
 	}
 
-	// Non-JSON files should get 0644
+	// Non-JSON files should get 0644 (on Windows: 0666)
 	dir2 := t.TempDir()
 	err = InstallForRole("pi", dir2, dir2, "polecat", ".pi/extensions", "gastown-hooks.js", false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	info, _ = os.Stat(filepath.Join(dir2, ".pi/extensions", "gastown-hooks.js"))
-	if info.Mode().Perm() != 0644 {
-		t.Errorf("JS file perm = %o, want 0644", info.Mode().Perm())
+	wantJS := os.FileMode(0644)
+	if runtime.GOOS == "windows" {
+		wantJS = 0666
+	}
+	if info.Mode().Perm() != wantJS {
+		t.Errorf("JS file perm = %o, want %o", info.Mode().Perm(), wantJS)
 	}
 }
 

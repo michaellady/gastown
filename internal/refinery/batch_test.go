@@ -17,15 +17,35 @@ import (
 	"github.com/steveyegge/gastown/internal/rig"
 )
 
-// gateCheckFileNotExists returns a shell command that fails if the given file exists.
-// Cross-platform: uses "test ! -f" on Unix and "if exist ... (exit /b 1)" on Windows.
-// The runGate function handles shell invocation (sh -c on Unix, cmd /c on Windows).
-func gateCheckFileNotExists(filePath string) string {
+// buildGateChecker compiles a small Go binary that exits 1 when the file
+// given as its first argument exists, 0 otherwise.  This provides a
+// cross-platform gate command that avoids shell-specific syntax.
+func buildGateChecker(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	src := filepath.Join(dir, "main.go")
+	if err := os.WriteFile(src, []byte("package main\nimport \"os\"\nfunc main(){if _,e:=os.Stat(os.Args[1]);e==nil{os.Exit(1)}}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(dir, "gate_check")
 	if runtime.GOOS == "windows" {
-		// Use forward slashes — cmd.exe's "if exist" handles them fine
-		// and it avoids backslash escaping issues.
-		fwd := strings.ReplaceAll(filePath, `\`, `/`)
-		return fmt.Sprintf(`if exist "%s" (exit /b 1)`, fwd)
+		bin += ".exe"
+	}
+	cmd := exec.Command("go", "build", "-o", bin, src)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("build gate checker: %v\n%s", err, out)
+	}
+	return bin
+}
+
+// gateCheckFileNotExists returns a gate command that fails (exit 1) when filePath exists.
+// On Unix it uses the shell built-in "test"; on Windows it uses a compiled Go
+// binary so that cmd /c can execute it without quoting issues.
+func gateCheckFileNotExists(t *testing.T, filePath string) string {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		checker := buildGateChecker(t)
+		return checker + " " + filePath
 	}
 	return fmt.Sprintf("test ! -f %s", filePath)
 }
@@ -470,9 +490,6 @@ func TestProcessBatch_WithConflict(t *testing.T) {
 }
 
 func TestProcessBatch_GateFailure_BisectsToFindCulprit(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("gate commands use shell syntax not available on Windows CI (MSYS2)")
-	}
 	workDir, g, cleanup := testGitRepo(t)
 	defer cleanup()
 
@@ -484,7 +501,7 @@ func TestProcessBatch_GateFailure_BisectsToFindCulprit(t *testing.T) {
 	e := newTestEngineer(t, workDir, g)
 	// Gate that fails if FAIL_MARKER exists
 	e.config.Gates = map[string]*GateConfig{
-		"check": {Cmd: gateCheckFileNotExists(filepath.Join(workDir, "FAIL_MARKER"))},
+		"check": {Cmd: gateCheckFileNotExists(t, filepath.Join(workDir, "FAIL_MARKER"))},
 	}
 	e.config.GatesParallel = false
 
@@ -618,7 +635,7 @@ func TestBisectBatch_SingleMR(t *testing.T) {
 
 	e := newTestEngineer(t, workDir, g)
 	e.config.Gates = map[string]*GateConfig{
-		"check": {Cmd: gateCheckFileNotExists(filepath.Join(workDir, "FAIL_MARKER"))},
+		"check": {Cmd: gateCheckFileNotExists(t, filepath.Join(workDir, "FAIL_MARKER"))},
 	}
 
 	batch := []*MRInfo{makeMR("mr-a", "feature-a", "main")}
@@ -641,7 +658,7 @@ func TestBisectBatch_TwoMRs_SecondBad(t *testing.T) {
 
 	e := newTestEngineer(t, workDir, g)
 	e.config.Gates = map[string]*GateConfig{
-		"check": {Cmd: gateCheckFileNotExists(filepath.Join(workDir, "FAIL_MARKER"))},
+		"check": {Cmd: gateCheckFileNotExists(t, filepath.Join(workDir, "FAIL_MARKER"))},
 	}
 
 	batch := []*MRInfo{
@@ -659,9 +676,6 @@ func TestBisectBatch_TwoMRs_SecondBad(t *testing.T) {
 }
 
 func TestBisectBatch_TwoMRs_FirstBad(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("gate commands use shell syntax not available on Windows CI (MSYS2)")
-	}
 	workDir, g, cleanup := testGitRepo(t)
 	defer cleanup()
 
@@ -670,7 +684,7 @@ func TestBisectBatch_TwoMRs_FirstBad(t *testing.T) {
 
 	e := newTestEngineer(t, workDir, g)
 	e.config.Gates = map[string]*GateConfig{
-		"check": {Cmd: gateCheckFileNotExists(filepath.Join(workDir, "FAIL_MARKER"))},
+		"check": {Cmd: gateCheckFileNotExists(t, filepath.Join(workDir, "FAIL_MARKER"))},
 	}
 
 	batch := []*MRInfo{
@@ -688,9 +702,6 @@ func TestBisectBatch_TwoMRs_FirstBad(t *testing.T) {
 }
 
 func TestBisectBatch_FourMRs_ThirdBad(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("gate commands use shell syntax not available on Windows CI (MSYS2)")
-	}
 	workDir, g, cleanup := testGitRepo(t)
 	defer cleanup()
 
@@ -702,7 +713,7 @@ func TestBisectBatch_FourMRs_ThirdBad(t *testing.T) {
 	e := newTestEngineer(t, workDir, g)
 	e.output = os.Stderr
 	e.config.Gates = map[string]*GateConfig{
-		"check": {Cmd: gateCheckFileNotExists(filepath.Join(workDir, "FAIL_MARKER"))},
+		"check": {Cmd: gateCheckFileNotExists(t, filepath.Join(workDir, "FAIL_MARKER"))},
 	}
 
 	batch := []*MRInfo{
@@ -759,9 +770,6 @@ func TestProcessBatch_PushesAndLands(t *testing.T) {
 }
 
 func TestProcessBatch_BisectAndMergeGood(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("gate commands use shell syntax not available on Windows CI (MSYS2)")
-	}
 	workDir, g, cleanup := testGitRepo(t)
 	defer cleanup()
 
@@ -770,7 +778,7 @@ func TestProcessBatch_BisectAndMergeGood(t *testing.T) {
 
 	e := newTestEngineer(t, workDir, g)
 	e.config.Gates = map[string]*GateConfig{
-		"check": {Cmd: gateCheckFileNotExists(filepath.Join(workDir, "FAIL_MARKER"))},
+		"check": {Cmd: gateCheckFileNotExists(t, filepath.Join(workDir, "FAIL_MARKER"))},
 	}
 
 	batch := []*MRInfo{

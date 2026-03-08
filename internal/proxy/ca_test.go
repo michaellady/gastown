@@ -50,16 +50,17 @@ func TestGenerateCA(t *testing.T) {
 	})
 
 	t.Run("ca.key file permissions are 0600", func(t *testing.T) {
-		if runtime.GOOS == "windows" {
-			t.Skip("Unix file permissions not supported on Windows")
-		}
 		dir := t.TempDir()
 		_, err := GenerateCA(dir)
 		require.NoError(t, err)
 
 		info, err := os.Stat(filepath.Join(dir, "ca.key"))
 		require.NoError(t, err)
-		assert.Equal(t, os.FileMode(0600), info.Mode().Perm())
+		want := os.FileMode(0600)
+		if runtime.GOOS == "windows" {
+			want = 0666 // Windows NTFS ignores Unix permission bits
+		}
+		assert.Equal(t, want, info.Mode().Perm())
 	})
 
 	t.Run("second call to same dir overwrites cleanly (no panic)", func(t *testing.T) {
@@ -73,16 +74,21 @@ func TestGenerateCA(t *testing.T) {
 	})
 
 	t.Run("unwritable dir returns error", func(t *testing.T) {
-		if runtime.GOOS == "windows" {
-			t.Skip("chmod-based permission restrictions don't apply on Windows")
-		}
-		if os.Getuid() == 0 {
-			t.Skip("running as root; chmod restrictions do not apply")
-		}
 		parent := t.TempDir()
-		require.NoError(t, os.Chmod(parent, 0500))
-		t.Cleanup(func() { os.Chmod(parent, 0700) }) //nolint:errcheck
-		_, err := GenerateCA(filepath.Join(parent, "ca"))
+		target := filepath.Join(parent, "ca")
+		if runtime.GOOS == "windows" {
+			// On Windows, chmod doesn't restrict directory writes.
+			// Instead, create a regular file at the target path so
+			// MkdirAll inside GenerateCA fails.
+			require.NoError(t, os.WriteFile(target, []byte("x"), 0644))
+		} else {
+			if os.Getuid() == 0 {
+				t.Skip("running as root; chmod restrictions do not apply")
+			}
+			require.NoError(t, os.Chmod(parent, 0500))
+			t.Cleanup(func() { os.Chmod(parent, 0700) }) //nolint:errcheck
+		}
+		_, err := GenerateCA(target)
 		assert.Error(t, err)
 	})
 }

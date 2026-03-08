@@ -7,10 +7,12 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -226,19 +228,28 @@ func TestHandleExec(t *testing.T) {
 	})
 
 	t.Run("GT_PROXY_IDENTITY env var is set when CN is present", func(t *testing.T) {
-		if runtime.GOOS == "windows" {
-			t.Skip("shell scripts not supported on Windows")
-		}
-		// Write a tiny script that prints the GT_PROXY_IDENTITY env var.
-		// The script is placed in a temp dir added to PATH so AllowedCommands
+		// Build a small program that prints the GT_PROXY_IDENTITY env var.
+		// The binary is placed in a temp dir added to PATH so AllowedCommands
 		// can reference it by plain name (no path separator — issue 12).
 		scriptDir := t.TempDir()
-		scriptPath := filepath.Join(scriptDir, "printenv.sh")
-		require.NoError(t, os.WriteFile(scriptPath, []byte("#!/bin/sh\nprintf '%s' \"$GT_PROXY_IDENTITY\"\n"), 0755))
-		t.Setenv("PATH", scriptDir+":"+os.Getenv("PATH"))
 
-		srv2 := newExecTestServer(t, Config{AllowedCommands: []string{"printenv.sh"}})
-		body := `{"argv":["printenv.sh"]}`
+		var scriptName string
+		if runtime.GOOS == "windows" {
+			// Compile a Go binary that prints the env var.
+			src := filepath.Join(scriptDir, "main.go")
+			require.NoError(t, os.WriteFile(src, []byte("package main\nimport(\"fmt\";\"os\")\nfunc main(){fmt.Print(os.Getenv(\"GT_PROXY_IDENTITY\"))}"), 0644))
+			scriptName = "printenv.exe"
+			cmd := exec.Command("go", "build", "-o", filepath.Join(scriptDir, scriptName), src)
+			out, err := cmd.CombinedOutput()
+			require.NoError(t, err, "build printenv: %s", out)
+		} else {
+			scriptName = "printenv.sh"
+			require.NoError(t, os.WriteFile(filepath.Join(scriptDir, scriptName), []byte("#!/bin/sh\nprintf '%s' \"$GT_PROXY_IDENTITY\"\n"), 0755))
+		}
+		t.Setenv("PATH", scriptDir+string(filepath.ListSeparator)+os.Getenv("PATH"))
+
+		srv2 := newExecTestServer(t, Config{AllowedCommands: []string{scriptName}})
+		body := fmt.Sprintf(`{"argv":[%q]}`, scriptName)
 		req := makeFakeRequest("POST", "/v1/exec", body, "gt-gastown-rust")
 		rec := httptest.NewRecorder()
 		srv2.handleExec(rec, req)

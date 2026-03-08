@@ -14,7 +14,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -616,9 +615,6 @@ func TestHandleGitAuditLogIntegration(t *testing.T) {
 //   - Asserts that a push to refs/heads/polecat/raider-* (allowed) succeeds.
 //   - Asserts that a push to refs/heads/main (disallowed) is rejected.
 func TestHandleReceivePackIntegration(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("git credential/mTLS handling differs on Windows")
-	}
 	gitPath := requireGit(t)
 
 	// Generate the CA and issue a polecat client cert.
