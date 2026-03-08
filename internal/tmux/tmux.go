@@ -373,17 +373,23 @@ func (t *Tmux) checkSessionAfterCreate(name, command string) error {
 		return true, nil
 	}
 
-	// First check at 50ms: catches fast failures on lightly-loaded runners.
-	time.Sleep(50 * time.Millisecond)
+	// First check at 100ms: catches fast failures on lightly-loaded runners.
+	time.Sleep(100 * time.Millisecond)
 	if dead, err := checkPaneDead(); dead {
 		return err
 	}
 
-	// Second check at 250ms: catches exec failures on loaded CI runners where
-	// process startup takes longer than 50ms. This is the fix for CI getting
-	// false negatives on TestNewSessionWithCommand_ExecEnvBadBinary. Normal
-	// long-lived sessions (Claude, shell) will still be alive here and return nil.
-	time.Sleep(200 * time.Millisecond)
+	// Second check at 350ms: catches exec failures on moderately loaded runners.
+	time.Sleep(250 * time.Millisecond)
+	if dead, err := checkPaneDead(); dead {
+		return err
+	}
+
+	// Third check at 750ms: catches exec failures on heavily loaded CI runners
+	// where process startup takes longer than expected. This fixes flaky failures
+	// in TestNewSessionWithCommand_ExecEnvBadBinary on slow CI. Normal long-lived
+	// sessions (Claude, shell) will still be alive here and return nil.
+	time.Sleep(400 * time.Millisecond)
 	if dead, err := checkPaneDead(); dead {
 		return err
 	}

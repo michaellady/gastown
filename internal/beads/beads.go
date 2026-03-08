@@ -45,6 +45,14 @@ func BdSupportsAllowStale() bool {
 	return bdAllowStaleResult
 }
 
+// ResetBdAllowStaleCache resets the cached result of BdSupportsAllowStale.
+// This is needed in tests where a stub bd is installed on PATH after the
+// cache has already been populated by a previous test in the same binary.
+func ResetBdAllowStaleCache() {
+	bdAllowStaleOnce = sync.Once{}
+	bdAllowStaleResult = false
+}
+
 // MaybePrependAllowStale prepends --allow-stale to args if bd supports it.
 // Exported for use by other packages that shell out to bd directly.
 func MaybePrependAllowStale(args []string) []string {
