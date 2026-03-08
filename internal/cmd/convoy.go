@@ -2086,9 +2086,10 @@ func getTrackedIssues(townBeads, convoyID string) ([]trackedIssueInfo, error) {
 		deps[i].ID = beads.ExtractIssueID(deps[i].ID)
 	}
 
-	// Fallback: if bd dep list returned no results, query via SQL to catch
-	// cross-DB deps that bd v0.59.0+ filters out (target issue not in local DB).
-	if len(deps) == 0 {
+	// SQL supplement: always query dependencies table to catch cross-DB deps
+	// that bd v0.59.0+ filters out from bd dep list. Handles mixed cases where
+	// some deps are local (returned by bd dep list) and some are cross-DB.
+	{
 		sqlQuery := fmt.Sprintf(
 			"SELECT depends_on_id, type FROM dependencies WHERE issue_id = '%s' AND type = 'tracks'",
 			convoyID)
@@ -2099,12 +2100,18 @@ func getTrackedIssues(townBeads, convoyID string) ([]trackedIssueInfo, error) {
 				Type        string `json:"type"`
 			}
 			if err := json.Unmarshal(sqlOut, &sqlDeps); err == nil {
+				seen := make(map[string]bool, len(deps))
+				for _, d := range deps {
+					seen[d.ID] = true
+				}
 				for _, sd := range sqlDeps {
 					depID := beads.ExtractIssueID(sd.DependsOnID)
-					deps = append(deps, trackedDependency{
-						ID:             depID,
-						DependencyType: sd.Type,
-					})
+					if !seen[depID] {
+						deps = append(deps, trackedDependency{
+							ID:             depID,
+							DependencyType: sd.Type,
+						})
+					}
 				}
 			}
 		}

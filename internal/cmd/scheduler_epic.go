@@ -296,7 +296,7 @@ type epicChild struct {
 }
 
 // getEpicChildren returns child issues of an epic via dependency lookup.
-// Uses bd dep list first, with a SQL fallback for cross-DB dependencies
+// Uses bd dep list supplemented by SQL query to catch cross-DB dependencies
 // that bd v0.59.0+ filters out (target issue not in local DB).
 func getEpicChildren(epicID string) ([]epicChild, error) {
 	epicDir := resolveBeadDir(epicID)
@@ -328,9 +328,11 @@ func getEpicChildren(epicID string) ([]epicChild, error) {
 		}
 	}
 
-	// SQL fallback: query dependencies table directly for cross-DB deps
-	// that bd v0.59.0+ filters out from bd dep list.
-	if len(deps) == 0 {
+	// SQL supplement: query dependencies table directly to catch cross-DB deps
+	// that bd v0.59.0+ filters out from bd dep list. Always run this to handle
+	// mixed cases where some deps are local (returned by bd dep list) and some
+	// are cross-DB (filtered out).
+	{
 		sqlQuery := fmt.Sprintf(
 			"SELECT depends_on_id FROM dependencies WHERE issue_id = '%s' AND type = 'depends_on'",
 			epicID)
@@ -344,12 +346,18 @@ func getEpicChildren(epicID string) ([]epicChild, error) {
 				DependsOnID string `json:"depends_on_id"`
 			}
 			if err := json.Unmarshal(sqlStdout.Bytes(), &sqlDeps); err == nil {
+				seen := make(map[string]bool, len(deps))
+				for _, d := range deps {
+					seen[d.ID] = true
+				}
 				for _, sd := range sqlDeps {
-					deps = append(deps, struct {
-						ID     string `json:"id"`
-						Title  string `json:"title"`
-						Status string `json:"status"`
-					}{ID: sd.DependsOnID})
+					if !seen[sd.DependsOnID] {
+						deps = append(deps, struct {
+							ID     string `json:"id"`
+							Title  string `json:"title"`
+							Status string `json:"status"`
+						}{ID: sd.DependsOnID})
+					}
 				}
 			}
 		}

@@ -322,21 +322,26 @@ func TestSchedulerAutoConvoyCreation(t *testing.T) {
 
 	// Verify: convoy has a "tracks" dependency pointing to the rig bead.
 	// This is the core cross-rig link: convoy lives in HQ DB, bead in rig DB.
-	depCmd := exec.Command("bd", "dep", "list", fields.Convoy, "--direction=down", "--type=tracks", "--json")
+	// Use SQL query instead of bd dep list because bd v0.59.0+ filters out
+	// cross-DB dependencies (target IDs that don't exist in the local DB).
+	sqlQuery := fmt.Sprintf(
+		"SELECT depends_on_id FROM dependencies WHERE issue_id = '%s' AND type = 'tracks'",
+		fields.Convoy)
+	depCmd := exec.Command("bd", "sql", sqlQuery, "--json")
 	depCmd.Dir = hqPath
 	depOut, err := depCmd.Output()
 	if err != nil {
-		t.Fatalf("bd dep list %s --type=tracks failed: %v", fields.Convoy, err)
+		t.Fatalf("bd sql tracks query for %s failed: %v", fields.Convoy, err)
 	}
 	var deps []struct {
-		ID string `json:"id"`
+		DependsOnID string `json:"depends_on_id"`
 	}
 	if err := json.Unmarshal(depOut, &deps); err != nil {
-		t.Fatalf("parse dep list: %v\nraw: %s", err, depOut)
+		t.Fatalf("parse dep sql: %v\nraw: %s", err, depOut)
 	}
 	foundTracked := false
 	for _, dep := range deps {
-		if dep.ID == beadID {
+		if dep.DependsOnID == beadID {
 			foundTracked = true
 			break
 		}

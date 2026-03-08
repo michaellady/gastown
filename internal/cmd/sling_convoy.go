@@ -137,9 +137,10 @@ func convoyTracksBead(beadsDir, convoyID, beadID string) bool {
 		}
 	}
 
-	// SQL fallback: query dependencies table directly for cross-DB deps
-	// that bd v0.59.0+ filters out from bd dep list.
-	if len(tracked) == 0 {
+	// SQL supplement: always query dependencies table to catch cross-DB deps
+	// that bd v0.59.0+ filters out from bd dep list. Handles mixed cases where
+	// some deps are local and some are cross-DB.
+	{
 		sqlQuery := fmt.Sprintf(
 			"SELECT depends_on_id FROM dependencies WHERE issue_id = '%s' AND type = 'tracks'",
 			convoyID)
