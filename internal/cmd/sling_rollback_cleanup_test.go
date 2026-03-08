@@ -3,6 +3,7 @@ package cmd
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -232,7 +233,19 @@ func TestCloseConvoy_ClosesConvoy(t *testing.T) {
 	if err := os.MkdirAll(binDir, 0755); err != nil {
 		t.Fatalf("mkdir binDir: %v", err)
 	}
-	bdScript := `#!/bin/sh
+	if runtime.GOOS == "windows" {
+		bdScript := `@echo off
+if "%1"=="close" (
+	echo CLOSE:%2 %3 %4 %5 >> "` + townRoot + `\bd_close.log"
+)
+exit /b 0
+`
+		bdPath := filepath.Join(binDir, "bd.bat")
+		if err := os.WriteFile(bdPath, []byte(bdScript), 0755); err != nil {
+			t.Fatalf("write bd stub: %v", err)
+		}
+	} else {
+		bdScript := `#!/bin/sh
 cmd="$1"
 shift || true
 if [ "$cmd" = "close" ]; then
@@ -240,9 +253,10 @@ if [ "$cmd" = "close" ]; then
 fi
 exit 0
 `
-	bdPath := filepath.Join(binDir, "bd")
-	if err := os.WriteFile(bdPath, []byte(bdScript), 0755); err != nil {
-		t.Fatalf("write bd stub: %v", err)
+		bdPath := filepath.Join(binDir, "bd")
+		if err := os.WriteFile(bdPath, []byte(bdScript), 0755); err != nil {
+			t.Fatalf("write bd stub: %v", err)
+		}
 	}
 
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
@@ -415,7 +429,21 @@ func TestRollbackSlingArtifacts_WithConvoyID(t *testing.T) {
 	if err := os.MkdirAll(binDir, 0755); err != nil {
 		t.Fatalf("mkdir binDir: %v", err)
 	}
-	bdScript := `#!/bin/sh
+	if runtime.GOOS == "windows" {
+		bdScript := `@echo off
+if "%1"=="update" exit /b 0
+if "%1"=="close" (
+	echo CLOSE:%2 %3 %4 %5 >> "` + townRoot + `\bd_close.log"
+	exit /b 0
+)
+exit /b 0
+`
+		bdPath := filepath.Join(binDir, "bd.bat")
+		if err := os.WriteFile(bdPath, []byte(bdScript), 0755); err != nil {
+			t.Fatalf("write bd stub: %v", err)
+		}
+	} else {
+		bdScript := `#!/bin/sh
 cmd="$1"
 shift || true
 case "$cmd" in
@@ -429,9 +457,10 @@ case "$cmd" in
 esac
 exit 0
 `
-	bdPath := filepath.Join(binDir, "bd")
-	if err := os.WriteFile(bdPath, []byte(bdScript), 0755); err != nil {
-		t.Fatalf("write bd stub: %v", err)
+		bdPath := filepath.Join(binDir, "bd")
+		if err := os.WriteFile(bdPath, []byte(bdScript), 0755); err != nil {
+			t.Fatalf("write bd stub: %v", err)
+		}
 	}
 
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))

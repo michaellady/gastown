@@ -18,10 +18,11 @@ import (
 )
 
 // gateCheckFileNotExists returns a shell command that fails if the given file exists.
-// Cross-platform: uses "test ! -f" on Unix and "cmd /c if exist ... exit 1" on Windows.
+// Cross-platform: uses "test ! -f" on Unix and "if exist ... exit 1" on Windows.
+// The runGate function handles shell invocation (sh -c on Unix, cmd /c on Windows).
 func gateCheckFileNotExists(filePath string) string {
 	if runtime.GOOS == "windows" {
-		return fmt.Sprintf(`cmd /c "if exist %s exit 1"`, filePath)
+		return fmt.Sprintf(`if exist "%s" exit 1`, filePath)
 	}
 	return fmt.Sprintf("test ! -f %s", filePath)
 }

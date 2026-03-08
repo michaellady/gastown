@@ -380,12 +380,19 @@ func (t *Tmux) checkSessionAfterCreate(name, command string) error {
 			}
 			time.Sleep(20 * time.Millisecond)
 		}
-		if status != "" && status != "0" {
+		if status == "0" {
+			// Clean exit (status 0) — not an error
 			_ = t.KillSession(name)
-			return true, fmt.Errorf("session %q: command exited with status %s: %s", name, status, command)
+			return true, nil
 		}
+		// Non-zero or unknown exit status — treat as failure.
+		// An empty status means tmux didn't record it, but the pane dying
+		// immediately after creation is almost always a command failure.
 		_ = t.KillSession(name)
-		return true, nil
+		if status == "" {
+			status = "unknown"
+		}
+		return true, fmt.Errorf("session %q: command exited with status %s: %s", name, status, command)
 	}
 
 	// First check at 100ms: catches fast failures on lightly-loaded runners.

@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -730,7 +731,12 @@ func (e *Engineer) runGate(ctx context.Context, name string, gate *GateConfig) G
 		defer cancel()
 	}
 
-	cmd := exec.CommandContext(gateCtx, "sh", "-c", gate.Cmd) //nolint:gosec // G204: Gate commands are from trusted rig config
+	var cmd *exec.Cmd
+	if runtime.GOOS == "windows" {
+		cmd = exec.CommandContext(gateCtx, "cmd", "/c", gate.Cmd) //nolint:gosec // G204: Gate commands are from trusted rig config
+	} else {
+		cmd = exec.CommandContext(gateCtx, "sh", "-c", gate.Cmd) //nolint:gosec // G204: Gate commands are from trusted rig config
+	}
 	cmd.Dir = e.workDir
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
