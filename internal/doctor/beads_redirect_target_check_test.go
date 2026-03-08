@@ -2,6 +2,7 @@ package doctor
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -634,10 +635,14 @@ func TestBeadsRedirectTargetCheck_FixMetadataRepairFails(t *testing.T) {
 	}
 	if runtime.GOOS == "windows" {
 		// On Windows, chmod doesn't restrict directory writes.
-		// Create a directory at config.yaml's path so os.WriteFile fails.
-		if err := os.MkdirAll(filepath.Join(rigBeadsDir, "config.yaml"), 0755); err != nil {
-			t.Fatal(err)
+		// Use icacls to deny write permission via Windows ACLs.
+		cmd := exec.Command("icacls", rigBeadsDir, "/deny", "Everyone:(W)")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("icacls deny write: %v\n%s", err, out)
 		}
+		t.Cleanup(func() {
+			exec.Command("icacls", rigBeadsDir, "/remove:d", "Everyone").CombinedOutput() //nolint:errcheck
+		})
 	} else {
 		if os.Getuid() == 0 {
 			t.Skip("running as root; chmod restrictions do not apply")

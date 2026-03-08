@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -692,12 +693,18 @@ func TestHandleReceivePackIntegration(t *testing.T) {
 
 	// pushRef runs git push with mTLS client cert/key/CA configured via -c flags.
 	pushRef := func(refspec string) ([]byte, error) {
-		cmd := exec.Command(gitPath,
-			"-c", "http.sslCert="+certFile,
-			"-c", "http.sslKey="+keyFile,
-			"-c", "http.sslCAInfo="+caFile,
-			"push", repoURL, refspec,
-		)
+		args := []string{
+			"-c", "http.sslCert=" + certFile,
+			"-c", "http.sslKey=" + keyFile,
+			"-c", "http.sslCAInfo=" + caFile,
+		}
+		if runtime.GOOS == "windows" {
+			// Git for Windows may default to SChannel which doesn't
+			// handle PEM client certs. Force the OpenSSL backend.
+			args = append(args, "-c", "http.sslBackend=openssl")
+		}
+		args = append(args, "push", repoURL, refspec)
+		cmd := exec.Command(gitPath, args...)
 		cmd.Dir = localRepo
 		cmd.Env = baseEnv
 		return cmd.CombinedOutput()
