@@ -1,0 +1,138 @@
+;;
+;; gastown-polecat.sb - macOS sandbox-exec (Seatbelt) profile for polecat isolation
+;;
+;; Usage:
+;;   sandbox-exec -f gastown-polecat.sb \
+;;     -D WORKTREE=/path/to/worktree \
+;;     -D TOWN_ROOT=/path/to/gt \
+;;     -D RIG_NAME=gastown \
+;;     -D _HOME=/Users/you \
+;;     claude --mode=direct
+;;
+;; Parameters (passed via -D):
+;;   WORKTREE   - absolute path to polecat's git worktree (RW)
+;;   TOWN_ROOT  - absolute path to town root, e.g. ~/gt (RO shared dirs)
+;;   RIG_NAME   - rig name, e.g. gastown (for rig-level .beads access)
+;;   _HOME      - user home directory (underscore prefix avoids param name conflict)
+;;
+;; Policy summary:
+;;   - RW: worktree only, plus .claude state, .npm cache, rig .beads, .runtime
+;;   - RO: system libs, tool binaries, town .beads, .repo.git, .ssh, .gitconfig
+;;   - Network: loopback (Dolt) + outbound HTTPS (Anthropic API) + DNS
+;;   - Execute: gt, bd, claude, git, node, dolt, system binaries
+;;
+
+(version 1)
+(deny default)
+(import "system.sb")
+
+;; Process control
+(allow process-fork)
+(allow process-exec)
+(allow signal (target self))
+
+;; Execute system and tool binaries
+(allow process-exec
+    (subpath "/usr/bin")
+    (subpath "/usr/sbin")
+    (subpath "/usr/libexec")
+    (subpath "/bin")
+    (subpath "/sbin")
+    (subpath "/opt/homebrew")
+    (subpath (string-append (param "_HOME") "/.local"))
+    (subpath "/Library/Developer/CommandLineTools"))
+
+;; System reads
+(allow file-read*
+    (subpath "/usr")
+    (subpath "/bin")
+    (subpath "/sbin")
+    (subpath "/dev")
+    (subpath "/private/etc")
+    (subpath "/private/var/db")
+    (subpath "/private/var/select")
+    (subpath "/Library")
+    (subpath "/System")
+    (subpath "/Library/Developer/CommandLineTools")
+    (subpath "/opt/homebrew")
+    (subpath "/private/tmp")
+    (subpath "/private/var/folders"))
+
+;; Parent directory traversal (git, node, etc. need to stat parent dirs)
+(allow file-read-metadata
+    (literal "/")
+    (literal "/Users")
+    (subpath (param "_HOME")))
+
+;; User tool and config reads
+(allow file-read*
+    (subpath (string-append (param "_HOME") "/.local"))
+    (subpath (string-append (param "_HOME") "/.claude"))
+    (subpath (string-append (param "_HOME") "/.npm"))
+    (literal (string-append (param "_HOME") "/.gitconfig"))
+    (subpath (string-append (param "_HOME") "/.config/git"))
+    (subpath (string-append (param "_HOME") "/.ssh")))
+
+;; Gas Town shared dirs (read-only)
+(allow file-read*
+    (subpath (string-append (param "TOWN_ROOT") "/.beads"))
+    (subpath (string-append (param "TOWN_ROOT") "/.runtime"))
+    (subpath (string-append (param "TOWN_ROOT") "/" (param "RIG_NAME") "/.beads"))
+    (subpath (string-append (param "TOWN_ROOT") "/" (param "RIG_NAME") "/.repo.git"))
+    ;; Main rig .git (worktrees reference this for git operations)
+    (subpath (string-append (param "TOWN_ROOT") "/" (param "RIG_NAME") "/.git"))
+    (literal (string-append (param "TOWN_ROOT") "/CLAUDE.md"))
+    ;; Mayor config (rig registry, routes)
+    (subpath (string-append (param "TOWN_ROOT") "/mayor"))
+    ;; Town-level docs
+    (subpath (string-append (param "TOWN_ROOT") "/docs")))
+
+;; Polecat worktree - full read+write (PRIMARY WORKSPACE)
+(allow file-read* file-write*
+    (subpath (param "WORKTREE")))
+
+;; Temp and device writes
+(allow file-write*
+    (subpath "/private/tmp")
+    (subpath "/private/var/folders")
+    (literal "/dev/null")
+    (literal "/dev/tty"))
+
+;; Claude CLI state (auth tokens, session data)
+(allow file-write*
+    (subpath (string-append (param "_HOME") "/.claude")))
+
+;; npm cache
+(allow file-write*
+    (subpath (string-append (param "_HOME") "/.npm")))
+
+;; Beads write access (bd update/close needs write to rig .beads)
+(allow file-write*
+    (subpath (string-append (param "TOWN_ROOT") "/" (param "RIG_NAME") "/.beads")))
+
+;; Runtime writes (heartbeat, locks, nudge queue)
+(allow file-write*
+    (subpath (string-append (param "TOWN_ROOT") "/.runtime")))
+
+;; Network - loopback for Dolt, outbound HTTPS for Anthropic API, DNS
+(allow network* (local ip "localhost:*"))
+(allow network* (remote ip "localhost:*"))
+(allow network-outbound (remote tcp "*:443"))
+(allow network-outbound (remote udp "*:53"))
+(allow network-outbound (remote tcp "*:53"))
+(allow network* (local unix-socket))
+(allow network* (remote unix-socket))
+
+;; IPC / Mach (required for process spawning and system services)
+(allow mach-lookup)
+(allow mach-register)
+(allow ipc-posix-shm-read*)
+(allow ipc-posix-shm-write-create)
+(allow ipc-posix-shm-write-data)
+
+;; Sysctl
+(allow sysctl-read)
+
+;; I/O Kit
+(allow iokit-open)
+(allow system-socket)
