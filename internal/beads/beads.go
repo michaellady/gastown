@@ -62,6 +62,9 @@ func BdSupportsAllowStale() bool {
 	}
 
 	cmd := exec.Command(bdPath, "--allow-stale", "version") //nolint:gosec // G204: bd is a trusted internal tool
+	// Strip BEADS_DIR_LOG to avoid polluting test log files when a fake
+	// bd stub is on PATH.
+	cmd.Env = stripEnvPrefixes(os.Environ(), "BEADS_DIR_LOG=")
 	supported := cmd.Run() == nil
 
 	bdAllowStaleMu.Lock()
@@ -92,7 +95,11 @@ var (
 // bdSupportsFlat returns true if the installed bd binary accepts --flat.
 func bdSupportsFlat() bool {
 	bdFlatOnce.Do(func() {
-		out, err := exec.Command("bd", "list", "--help").Output() //nolint:gosec // G204: bd is a trusted internal tool
+		cmd := exec.Command("bd", "list", "--help") //nolint:gosec // G204: bd is a trusted internal tool
+		// Strip BEADS_DIR_LOG to avoid polluting test log files when a fake
+		// bd stub is on PATH (the stub may log BEADS_DIR for every invocation).
+		cmd.Env = stripEnvPrefixes(os.Environ(), "BEADS_DIR_LOG=")
+		out, err := cmd.Output()
 		if err == nil && strings.Contains(string(out), "--flat") {
 			bdFlatResult = true
 		}

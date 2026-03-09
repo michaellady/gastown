@@ -13,6 +13,7 @@ import (
 
 func TestBuildBdInitArgs_AlwaysIncludesServerPort(t *testing.T) {
 	townDir := t.TempDir()
+	t.Setenv("GT_DOLT_PORT", "") // Clear to ensure default port
 
 	args := buildBdInitArgs(townDir)
 
