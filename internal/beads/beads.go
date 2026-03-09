@@ -28,29 +28,50 @@ var (
 )
 
 // bdAllowStale caches whether the installed bd supports --allow-stale.
-// Detected once at first use via `bd --allow-stale version`.
+// The cache is keyed by the resolved bd path so tests and subprocess stubs that
+// replace bd on PATH get re-probed instead of reusing stale capability state.
 var (
-	bdAllowStaleOnce   sync.Once
+	bdAllowStaleMu     sync.Mutex
+	bdAllowStalePath   string
 	bdAllowStaleResult bool
 )
 
-// BdSupportsAllowStale returns true if the installed bd binary accepts --allow-stale.
-func BdSupportsAllowStale() bool {
-	bdAllowStaleOnce.Do(func() {
-		cmd := exec.Command("bd", "--allow-stale", "version") //nolint:gosec // G204: bd is a trusted internal tool
-		if err := cmd.Run(); err == nil {
-			bdAllowStaleResult = true
-		}
-	})
-	return bdAllowStaleResult
+// ResetBdAllowStaleCacheForTest clears the cached bd --allow-stale capability.
+// It exists for tests that swap bd binaries on PATH within a single process.
+func ResetBdAllowStaleCacheForTest() {
+	bdAllowStaleMu.Lock()
+	bdAllowStalePath = ""
+	bdAllowStaleResult = false
+	bdAllowStaleMu.Unlock()
 }
 
-// ResetBdAllowStaleCache resets the cached result of BdSupportsAllowStale.
-// This is needed in tests where a stub bd is installed on PATH after the
-// cache has already been populated by a previous test in the same binary.
-func ResetBdAllowStaleCache() {
-	bdAllowStaleOnce = sync.Once{}
-	bdAllowStaleResult = false
+// BdSupportsAllowStale returns true if the installed bd binary accepts --allow-stale.
+func BdSupportsAllowStale() bool {
+	bdPath, err := exec.LookPath("bd")
+	if err != nil {
+		return false
+	}
+
+	bdAllowStaleMu.Lock()
+	cachedPath := bdAllowStalePath
+	cachedResult := bdAllowStaleResult
+	bdAllowStaleMu.Unlock()
+
+	if cachedPath == bdPath {
+		return cachedResult
+	}
+
+	cmd := exec.Command(bdPath, "--allow-stale", "version") //nolint:gosec // G204: bd is a trusted internal tool
+	supported := cmd.Run() == nil
+
+	bdAllowStaleMu.Lock()
+	if bdAllowStalePath != bdPath {
+		bdAllowStalePath = bdPath
+		bdAllowStaleResult = supported
+	}
+	result := bdAllowStaleResult
+	bdAllowStaleMu.Unlock()
+	return result
 }
 
 // MaybePrependAllowStale prepends --allow-stale to args if bd supports it.

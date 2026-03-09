@@ -920,9 +920,8 @@ exit /b 1
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	// Reset the cached BdSupportsAllowStale result so it re-probes using our stub bd.
-	// The sync.Once may have been populated by an earlier test without the stub on PATH.
-	beads.ResetBdAllowStaleCache()
-	t.Cleanup(func() { beads.ResetBdAllowStaleCache() })
+	beads.ResetBdAllowStaleCacheForTest()
+	t.Cleanup(func() { beads.ResetBdAllowStaleCacheForTest() })
 
 	cwd, err := os.Getwd()
 	if err != nil {
