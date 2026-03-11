@@ -153,7 +153,7 @@ func runPrime(cmd *cobra.Command, args []string) (retErr error) {
 	// any new mail. This keeps PreCompress hooks under 1s for non-Claude
 	// runtimes that have short hook timeouts (Gemini CLI).
 	if isCompactResume() {
-		runPrimeCompactResume(ctx, cwd)
+		runPrimeCompactResume(ctx)
 		return nil
 	}
 
@@ -205,7 +205,7 @@ func runPrime(cmd *cobra.Command, args []string) (retErr error) {
 // Unlike the full prime path, this outputs a brief recovery line instead of
 // the full AUTONOMOUS WORK MODE block. This prevents agents from re-announcing
 // and re-initializing after compaction. (GH#1965)
-func runPrimeCompactResume(ctx RoleContext, cwd string) {
+func runPrimeCompactResume(ctx RoleContext) {
 	// Brief identity confirmation
 	actor := getAgentIdentity(ctx)
 	source := primeHookSource
