@@ -19,7 +19,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 
 	"github.com/steveyegge/gastown/internal/constants"
 )
@@ -68,9 +67,7 @@ func StartPoller(townRoot, session string) (int, error) {
 	cmd.Dir = townRoot
 	cmd.Stdout = nil // discard
 	cmd.Stderr = nil // discard
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setpgid: true, // detach from parent process group
-	}
+	cmd.SysProcAttr = detachedProcAttr()
 
 	if err := cmd.Start(); err != nil {
 		return 0, fmt.Errorf("starting nudge-poller: %w", err)
@@ -115,17 +112,14 @@ func StopPoller(townRoot, session string) error {
 		return nil
 	}
 
-	// Check if alive via signal 0.
-	if err := proc.Signal(syscall.Signal(0)); err != nil {
-		// Process already dead.
+	if !isProcessAlive(proc) {
 		_ = os.Remove(pidPath)
 		return nil
 	}
 
-	// Send SIGTERM for graceful shutdown.
-	if err := proc.Signal(syscall.SIGTERM); err != nil {
+	if err := terminateProcess(proc); err != nil {
 		_ = os.Remove(pidPath)
-		return fmt.Errorf("sending SIGTERM to poller (pid %d): %w", pid, err)
+		return fmt.Errorf("terminating poller (pid %d): %w", pid, err)
 	}
 
 	_ = os.Remove(pidPath)
@@ -152,8 +146,7 @@ func pollerAlive(townRoot, session string) (int, bool) {
 		return 0, false
 	}
 
-	if err := proc.Signal(syscall.Signal(0)); err != nil {
-		// Stale PID file — clean up.
+	if !isProcessAlive(proc) {
 		_ = os.Remove(pidPath)
 		return 0, false
 	}
