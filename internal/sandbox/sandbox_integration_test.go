@@ -241,6 +241,58 @@ func TestIntegration_BeadsWriteFeature(t *testing.T) {
 	}
 }
 
+// TestIntegration_KeychainAccess verifies that the keychain feature
+// (enabled by default) allows security commands to run.
+func TestIntegration_KeychainAccess(t *testing.T) {
+	skipIfNoSandboxExec(t)
+	t.Parallel()
+
+	worktree := t.TempDir()
+	townRoot := t.TempDir()
+
+	cfg := PolicyConfig{
+		Home:     os.Getenv("HOME"),
+		TownRoot: townRoot,
+		RigName:  "testrig",
+		Worktree: worktree,
+	}
+
+	// The security command should at least be able to run without "Operation not permitted".
+	// We use "security list-keychains" which reads keychain paths — requires Keychain Mach services.
+	shellCmd := `security list-keychains 2>&1; echo "exit=$?"`
+	stdout, _, _ := runInSandbox(t, cfg, shellCmd)
+
+	if !strings.Contains(stdout, "exit=0") {
+		t.Errorf("security list-keychains should succeed with keychain feature, got: %q", stdout)
+	}
+}
+
+// TestIntegration_NodeRunsInWorktree verifies that Node.js can start from the worktree CWD.
+func TestIntegration_NodeRunsInWorktree(t *testing.T) {
+	skipIfNoSandboxExec(t)
+	t.Parallel()
+
+	worktree := t.TempDir()
+	townRoot := t.TempDir()
+
+	cfg := PolicyConfig{
+		Home:     os.Getenv("HOME"),
+		TownRoot: townRoot,
+		RigName:  "testrig",
+		Worktree: worktree,
+	}
+
+	// Node needs CWD to be readable. Run from the worktree via cd.
+	shellCmd := fmt.Sprintf(`cd %q && node -e "console.log('node-sandbox-ok')" 2>&1`, worktree)
+	stdout, stderr, err := runInSandbox(t, cfg, shellCmd)
+	if err != nil {
+		t.Fatalf("node should run in worktree: err=%v stderr=%q", err, stderr)
+	}
+	if !strings.Contains(stdout, "node-sandbox-ok") {
+		t.Errorf("expected node output, got: %q", stdout)
+	}
+}
+
 // TestIntegration_BuildCommandTokens_EndToEnd tests the full round trip:
 // assemble policy, get tokens, execute via sandbox-exec.
 func TestIntegration_BuildCommandTokens_EndToEnd(t *testing.T) {

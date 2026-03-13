@@ -13,6 +13,9 @@ func TestResolveFeatures_IncludesDefaults(t *testing.T) {
 	if !s.has(FeatureRuntimeWrite) {
 		t.Error("defaults should include runtime-write")
 	}
+	if !s.has(FeatureKeychain) {
+		t.Error("defaults should include keychain")
+	}
 	if s.has(FeatureDocker) {
 		t.Error("docker should not be in defaults")
 	}
@@ -33,12 +36,12 @@ func TestResolveFeatures_MergesExplicit(t *testing.T) {
 }
 
 func TestParseFeatures_Valid(t *testing.T) {
-	features, err := ParseFeatures([]string{"docker", "ssh", "beads-write"})
+	features, err := ParseFeatures([]string{"docker", "ssh", "beads-write", "keychain"})
 	if err != nil {
 		t.Fatalf("ParseFeatures failed: %v", err)
 	}
-	if len(features) != 3 {
-		t.Errorf("expected 3 features, got %d", len(features))
+	if len(features) != 4 {
+		t.Errorf("expected 4 features, got %d", len(features))
 	}
 }
 

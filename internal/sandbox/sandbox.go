@@ -239,6 +239,8 @@ func optionalProfileToFeature(rel string) Feature {
 		return FeatureBeadsWrite
 	case "runtime-write":
 		return FeatureRuntimeWrite
+	case "keychain":
+		return FeatureKeychain
 	default:
 		return ""
 	}

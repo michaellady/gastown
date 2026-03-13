@@ -50,12 +50,15 @@ func TestAssemble_DefaultConfig(t *testing.T) {
 		t.Error("missing IPC mach-lookup rules")
 	}
 
-	// Verify default features (beads-write, runtime-write) are included.
+	// Verify default features (beads-write, runtime-write, keychain) are included.
 	if !strings.Contains(policy.SBPL, "Beads write access") {
 		t.Error("default feature beads-write not included")
 	}
 	if !strings.Contains(policy.SBPL, "Runtime writes") {
 		t.Error("default feature runtime-write not included")
+	}
+	if !strings.Contains(policy.SBPL, "Keychain access") {
+		t.Error("default feature keychain not included")
 	}
 
 	// Verify params.
@@ -243,6 +246,90 @@ func TestAssemble_AgentSelection(t *testing.T) {
 
 	if strings.Contains(policy2.SBPL, "Claude Code state") {
 		t.Error("non-matching agent should not include claude-code profile")
+	}
+}
+
+func TestAssemble_KeychainFeature(t *testing.T) {
+	b := NewBuilder()
+
+	// Keychain is in defaults — verify it's present.
+	policy, err := b.Assemble(PolicyConfig{
+		Home:     "/Users/test",
+		TownRoot: "/Users/test/gt",
+		RigName:  "gastown",
+		Worktree: "/tmp/wt",
+	})
+	if err != nil {
+		t.Fatalf("Assemble failed: %v", err)
+	}
+
+	if !strings.Contains(policy.SBPL, "com.apple.SecurityServer") {
+		t.Error("keychain should include SecurityServer mach-lookup")
+	}
+	if !strings.Contains(policy.SBPL, "Library/Keychains") {
+		t.Error("keychain should include Keychains file access")
+	}
+	if !strings.Contains(policy.SBPL, "com.apple.AppleDatabaseChanged") {
+		t.Error("keychain should include AppleDatabaseChanged shm")
+	}
+}
+
+func TestAssemble_AllFeaturesCombined(t *testing.T) {
+	b := NewBuilder()
+	policy, err := b.Assemble(PolicyConfig{
+		Home:     "/Users/test",
+		TownRoot: "/Users/test/gt",
+		RigName:  "gastown",
+		Worktree: "/tmp/wt",
+		Features: []Feature{FeatureDocker, FeatureSSH, FeatureNetworkWide},
+	})
+	if err != nil {
+		t.Fatalf("Assemble failed: %v", err)
+	}
+
+	// All defaults should be present.
+	if !strings.Contains(policy.SBPL, "Beads write access") {
+		t.Error("missing beads-write default")
+	}
+	if !strings.Contains(policy.SBPL, "com.apple.SecurityServer") {
+		t.Error("missing keychain default")
+	}
+
+	// All explicit features should be present.
+	if !strings.Contains(policy.SBPL, "docker.sock") {
+		t.Error("missing docker")
+	}
+	if !strings.Contains(policy.SBPL, "/.ssh") {
+		t.Error("missing ssh")
+	}
+
+	// Network-wide should replace loopback.
+	if strings.Contains(policy.SBPL, `(allow network-bind (local ip "localhost:*"))`) {
+		t.Error("loopback should be replaced by network-wide")
+	}
+	if !strings.Contains(policy.SBPL, "(allow network*)") {
+		t.Error("missing network-wide")
+	}
+}
+
+func TestAssemble_EmptyFeaturesGetsDefaults(t *testing.T) {
+	b := NewBuilder()
+	policy, err := b.Assemble(PolicyConfig{
+		Home:     "/Users/test",
+		TownRoot: "/Users/test/gt",
+		RigName:  "gastown",
+		Worktree: "/tmp/wt",
+		Features: []Feature{}, // Explicit empty — defaults should still apply.
+	})
+	if err != nil {
+		t.Fatalf("Assemble failed: %v", err)
+	}
+
+	if !strings.Contains(policy.SBPL, "Beads write access") {
+		t.Error("defaults should still apply with empty features")
+	}
+	if !strings.Contains(policy.SBPL, "Keychain access") {
+		t.Error("keychain default should still apply with empty features")
 	}
 }
 

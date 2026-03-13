@@ -37,3 +37,27 @@ func IsAllowedEnvVar(name string) bool {
 	}
 	return false
 }
+
+// SanitizeEnv filters a slice of "KEY=value" environment entries, returning
+// only those whose key is in the allowlist. Additional entries can be forced
+// in via the extras parameter (also "KEY=value" format).
+func SanitizeEnv(environ []string, extras ...string) []string {
+	var out []string
+	for _, entry := range environ {
+		key, _, ok := splitEnvEntry(entry)
+		if ok && IsAllowedEnvVar(key) {
+			out = append(out, entry)
+		}
+	}
+	out = append(out, extras...)
+	return out
+}
+
+func splitEnvEntry(entry string) (key, value string, ok bool) {
+	for i := range entry {
+		if entry[i] == '=' {
+			return entry[:i], entry[i+1:], true
+		}
+	}
+	return "", "", false
+}

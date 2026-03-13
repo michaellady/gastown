@@ -18,18 +18,24 @@ const (
 
 	// FeatureSSH grants RW access to ~/.ssh for SSH agent forwarding.
 	FeatureSSH Feature = "ssh"
+
+	// FeatureKeychain grants access to macOS Keychain and Security framework.
+	// Required for agents that retrieve API keys from the system keychain.
+	FeatureKeychain Feature = "keychain"
 )
 
 // DefaultFeatures are enabled by default for polecat sessions.
 var DefaultFeatures = []Feature{
 	FeatureBeadsWrite,
 	FeatureRuntimeWrite,
+	FeatureKeychain,
 }
 
 // AllFeatures lists all known features for validation.
 var AllFeatures = []Feature{
 	FeatureBeadsWrite,
 	FeatureRuntimeWrite,
+	FeatureKeychain,
 	FeatureNetworkWide,
 	FeatureDocker,
 	FeatureSSH,
