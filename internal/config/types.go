@@ -722,11 +722,41 @@ type RuntimeConfig struct {
 	// Produces: exec env VAR=val ... exitbox run --profile=gastown-polecat -- claude ...
 	ExecWrapper []string `json:"exec_wrapper,omitempty"`
 
+	// Sandbox configures Go-native macOS sandbox-exec wrapping.
+	// When Enabled, the sandbox package assembles a composed SBPL policy
+	// from embedded profile fragments and generates sandbox-exec tokens
+	// that replace ExecWrapper. Takes precedence over raw ExecWrapper.
+	Sandbox *SandboxConfig `json:"sandbox,omitempty"`
+
 	// ResolvedAgent is the agent name that was resolved during config lookup.
 	// Set by ResolveRoleAgentConfig / resolveAgentConfigInternal so that
 	// BuildStartupCommand can export GT_AGENT for process detection.
 	// Not serialized — this is a runtime-only field.
 	ResolvedAgent string `json:"-"`
+}
+
+// SandboxConfig configures macOS sandbox-exec wrapping for agent sessions.
+type SandboxConfig struct {
+	// Enabled activates sandbox wrapping. Default: false.
+	Enabled bool `json:"enabled"`
+
+	// Features are optional sandbox capabilities.
+	// Known values: "beads-write", "runtime-write", "network-wide", "docker", "ssh".
+	// Default features (beads-write, runtime-write) are always included.
+	Features []string `json:"features,omitempty"`
+
+	// Agent selects the agent-specific profile (e.g., "claude-code").
+	// Default: "claude-code".
+	Agent string `json:"agent,omitempty"`
+
+	// ExtraDirsRO are additional read-only path grants.
+	ExtraDirsRO []string `json:"extra_dirs_ro,omitempty"`
+
+	// ExtraDirsRW are additional read-write path grants.
+	ExtraDirsRW []string `json:"extra_dirs_rw,omitempty"`
+
+	// Debug enables (debug deny) for sandbox violation logging.
+	Debug bool `json:"debug,omitempty"`
 }
 
 // RuntimeSessionConfig configures how Gas Town discovers runtime session IDs.

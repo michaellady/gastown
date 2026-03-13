@@ -1,0 +1,3 @@
+(version 1)
+(deny default)
+(import "system.sb")

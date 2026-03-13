@@ -1,0 +1,11 @@
+;; ─── User tool and config reads ──────────────────────────────────────────────
+(allow file-read*
+    (subpath (string-append (param "_HOME") "/.local"))
+    (subpath (string-append (param "_HOME") "/.claude"))
+    (subpath (string-append (param "_HOME") "/.npm"))
+    (literal (string-append (param "_HOME") "/.gitconfig"))
+    (subpath (string-append (param "_HOME") "/.config/git"))
+    (subpath (string-append (param "_HOME") "/.ssh"))
+    (literal (string-append (param "_HOME") "/.CFUserTextEncoding"))
+    (subpath (string-append (param "_HOME") "/Library/Preferences/ByHost"))
+    (literal (string-append (param "_HOME") "/Library/Preferences/.GlobalPreferences.plist")))

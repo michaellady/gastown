@@ -1,0 +1,3 @@
+;; ─── Beads write access ─────────────────────────────────────────────────────
+(allow file-write*
+    (subpath (string-append (param "TOWN_ROOT") "/" (param "RIG_NAME") "/.beads")))

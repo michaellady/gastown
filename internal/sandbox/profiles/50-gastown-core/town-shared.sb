@@ -1,0 +1,7 @@
+;; ─── Gas Town shared dirs (read-only) ────────────────────────────────────────
+(allow file-read*
+    (subpath (string-append (param "TOWN_ROOT") "/.beads"))
+    (subpath (string-append (param "TOWN_ROOT") "/.runtime"))
+    (literal (string-append (param "TOWN_ROOT") "/CLAUDE.md"))
+    (subpath (string-append (param "TOWN_ROOT") "/mayor"))
+    (subpath (string-append (param "TOWN_ROOT") "/docs")))

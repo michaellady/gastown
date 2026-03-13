@@ -1,0 +1,239 @@
+;;
+;; gastown-polecat.sb - macOS sandbox-exec (Seatbelt) profile for polecat isolation
+;;
+;; Usage:
+;;   sandbox-exec -f gastown-polecat.sb \
+;;     -D WORKTREE=/path/to/worktree \
+;;     -D TOWN_ROOT=/path/to/gt \
+;;     -D RIG_NAME=gastown \
+;;     -D _HOME=/Users/you \
+;;     claude --mode=direct
+;;
+;; Parameters (passed via -D):
+;;   WORKTREE   - absolute path to polecat's git worktree (RW)
+;;   TOWN_ROOT  - absolute path to town root, e.g. ~/gt (RO shared dirs)
+;;   RIG_NAME   - rig name, e.g. gastown (for rig-level .beads access)
+;;   _HOME      - user home directory (underscore prefix avoids param name conflict)
+;;
+;; Policy summary:
+;;   - RW: worktree only, plus .claude state, .npm cache, rig .beads, .runtime
+;;   - RO: system libs, tool binaries, town .beads, .repo.git, .ssh, .gitconfig
+;;   - Network: loopback (Dolt) + outbound HTTPS (Anthropic API) + DNS
+;;   - Execute: gt, bd, claude, git, node, dolt, system binaries
+;;
+;; Informed by: https://github.com/eugene1g/agent-safehouse
+
+(version 1)
+(deny default)
+(import "system.sb")
+
+;; ─── Process control ─────────────────────────────────────────────────────────
+(allow process-fork)
+(allow process-exec)
+(allow signal (target same-sandbox))
+(allow process-info* (target same-sandbox))
+(allow mach-priv-task-port (target same-sandbox))
+(allow pseudo-tty)
+(allow sysctl-read)
+
+;; ─── Execute system and tool binaries ────────────────────────────────────────
+(allow process-exec
+    (subpath "/usr/bin")
+    (subpath "/usr/sbin")
+    (subpath "/usr/libexec")
+    (subpath "/bin")
+    (subpath "/sbin")
+    (subpath "/opt/homebrew")
+    (subpath (string-append (param "_HOME") "/.local"))
+    (subpath "/Library/Developer/CommandLineTools"))
+
+;; ─── System reads ────────────────────────────────────────────────────────────
+(allow file-read*
+    (subpath "/usr")
+    (subpath "/bin")
+    (subpath "/sbin")
+    (subpath "/dev")
+    (subpath "/opt/homebrew")
+    (subpath "/System/Library")
+    (subpath "/System/Volumes/Preboot")
+    (subpath "/Library/Apple")
+    (subpath "/Library/Frameworks")
+    (subpath "/Library/Fonts")
+    (subpath "/Library/Developer/CommandLineTools")
+    (subpath "/Library/Preferences/Logging")
+    (subpath "/Library/Filesystems/NetFSPlugins")
+    (literal "/Library/Preferences/.GlobalPreferences.plist")
+    (literal "/Library/Preferences/com.apple.networkd.plist")
+    (literal "/dev")
+    (subpath "/private/tmp")
+    (subpath "/private/var/folders"))
+
+;; /etc and /var symlinks into /private/*
+(allow file-read*
+    (literal "/private")
+    (literal "/private/var")
+    (subpath "/private/var/db/timezone")
+    (literal "/private/var/select/sh")
+    (literal "/private/var/select/developer_dir")
+    (literal "/var/select/developer_dir")
+    (literal "/private/var/db/xcode_select_link")
+    (literal "/var/db/xcode_select_link")
+    (literal "/private/etc/hosts")
+    (literal "/private/etc/resolv.conf")
+    (literal "/private/etc/services")
+    (literal "/private/etc/protocols")
+    (literal "/private/etc/shells")
+    (subpath "/private/etc/ssl")
+    (literal "/private/etc/localtime")
+    (literal "/etc")
+    (literal "/var"))
+
+;; Metadata traversal for system roots
+(allow file-read-metadata
+    (subpath "/System")
+    (subpath "/private/var/run")
+    (literal "/")
+    (literal "/Users")
+    (literal "/home")
+    (literal "/private/etc")
+    (subpath "/dev")
+    (subpath (param "_HOME")))
+
+;; ─── User tool and config reads ──────────────────────────────────────────────
+(allow file-read*
+    (subpath (string-append (param "_HOME") "/.local"))
+    (subpath (string-append (param "_HOME") "/.claude"))
+    (subpath (string-append (param "_HOME") "/.npm"))
+    (literal (string-append (param "_HOME") "/.gitconfig"))
+    (subpath (string-append (param "_HOME") "/.config/git"))
+    (subpath (string-append (param "_HOME") "/.ssh"))
+    (literal (string-append (param "_HOME") "/.CFUserTextEncoding"))
+    (subpath (string-append (param "_HOME") "/Library/Preferences/ByHost"))
+    (literal (string-append (param "_HOME") "/Library/Preferences/.GlobalPreferences.plist")))
+
+;; XDG metadata traversal
+(allow file-read-metadata
+    (literal (string-append (param "_HOME") "/.config"))
+    (literal (string-append (param "_HOME") "/.cache"))
+    (literal (string-append (param "_HOME") "/.local"))
+    (literal (string-append (param "_HOME") "/.local/share"))
+    (literal (string-append (param "_HOME") "/.local/bin")))
+
+;; ─── Gas Town shared dirs (read-only) ────────────────────────────────────────
+(allow file-read*
+    (subpath (string-append (param "TOWN_ROOT") "/.beads"))
+    (subpath (string-append (param "TOWN_ROOT") "/.runtime"))
+    (subpath (string-append (param "TOWN_ROOT") "/" (param "RIG_NAME") "/.beads"))
+    (subpath (string-append (param "TOWN_ROOT") "/" (param "RIG_NAME") "/.repo.git"))
+    (subpath (string-append (param "TOWN_ROOT") "/" (param "RIG_NAME") "/.git"))
+    (literal (string-append (param "TOWN_ROOT") "/CLAUDE.md"))
+    (subpath (string-append (param "TOWN_ROOT") "/mayor"))
+    (subpath (string-append (param "TOWN_ROOT") "/docs")))
+
+;; ─── Polecat worktree - full read+write (PRIMARY WORKSPACE) ─────────────────
+(allow file-read* file-write*
+    (subpath (param "WORKTREE")))
+
+;; ─── Temp and device writes ──────────────────────────────────────────────────
+(allow file-read* file-write*
+    (subpath "/tmp")
+    (subpath "/private/tmp")
+    (subpath "/var/folders")
+    (subpath "/private/var/folders"))
+
+;; Device nodes for shell I/O and PTYs
+(allow file-read* file-write*
+    (subpath "/dev/fd")
+    (literal "/dev/stdout")
+    (literal "/dev/stderr")
+    (literal "/dev/null")
+    (literal "/dev/tty")
+    (literal "/dev/ptmx")
+    (literal "/dev/dtracehelper")
+    (regex #"^/dev/tty")
+    (regex #"^/dev/ttys")
+    (regex #"^/dev/pty"))
+
+(allow file-read*
+    (literal "/dev/zero")
+    (literal "/dev/autofs_nowait")
+    (literal "/dev/urandom")
+    (literal "/dev/random"))
+
+(allow file-ioctl
+    (literal "/dev/dtracehelper")
+    (literal "/dev/tty")
+    (literal "/dev/ptmx")
+    (regex #"^/dev/tty")
+    (regex #"^/dev/ttys")
+    (regex #"^/dev/pty"))
+
+;; ─── Claude Code state (RW) ─────────────────────────────────────────────────
+(allow file-read* file-write*
+    (subpath (string-append (param "_HOME") "/.claude"))
+    (subpath (string-append (param "_HOME") "/.cache/claude"))
+    (subpath (string-append (param "_HOME") "/.config/claude"))
+    (subpath (string-append (param "_HOME") "/.local/state/claude"))
+    (subpath (string-append (param "_HOME") "/.local/share/claude")))
+
+(allow file-read*
+    (literal (string-append (param "_HOME") "/Library/Application Support/Claude/claude_desktop_config.json"))
+    (subpath "/Library/Application Support/ClaudeCode/.claude")
+    (literal "/Library/Application Support/ClaudeCode/managed-settings.json")
+    (literal "/Library/Application Support/ClaudeCode/managed-mcp.json")
+    (literal "/Library/Application Support/ClaudeCode/CLAUDE.md"))
+
+;; npm cache
+(allow file-read* file-write*
+    (subpath (string-append (param "_HOME") "/.npm"))
+    (subpath (string-append (param "_HOME") "/.cache/npm"))
+    (subpath (string-append (param "_HOME") "/.cache/node")))
+
+;; ─── Beads write access ─────────────────────────────────────────────────────
+(allow file-write*
+    (subpath (string-append (param "TOWN_ROOT") "/" (param "RIG_NAME") "/.beads")))
+
+;; Runtime writes (heartbeat, locks, nudge queue)
+(allow file-write*
+    (subpath (string-append (param "TOWN_ROOT") "/.runtime")))
+
+;; ─── Network ─────────────────────────────────────────────────────────────────
+;; Loopback for Dolt, outbound HTTPS for Anthropic API, DNS.
+;; Use specific network-bind/inbound/outbound — NOT network* which is too broad.
+(allow network-bind (local ip "localhost:*"))
+(allow network-inbound (local ip "localhost:*"))
+(allow network-outbound (remote ip "localhost:*"))
+(allow network-outbound (remote tcp "*:443"))
+(allow network-outbound (remote udp "*:53"))
+(allow network-outbound (remote tcp "*:53"))
+(allow network* (local unix-socket))
+(allow network* (remote unix-socket))
+(allow system-socket)
+
+;; ─── IPC / Mach ──────────────────────────────────────────────────────────────
+(allow mach-lookup
+    (global-name "com.apple.system.notification_center")
+    (global-name "com.apple.system.opendirectoryd.libinfo")
+    (global-name "com.apple.logd")
+    (global-name "com.apple.FSEvents")
+    (global-name "com.apple.SystemConfiguration.configd")
+    (global-name "com.apple.SystemConfiguration.DNSConfiguration")
+    (global-name "com.apple.trustd.agent")
+    (global-name "com.apple.diagnosticd")
+    (global-name "com.apple.analyticsd")
+    (global-name "com.apple.dnssd.service")
+    (global-name "com.apple.CoreServices.coreservicesd")
+    (global-name "com.apple.DiskArbitration.diskarbitrationd")
+    (global-name "com.apple.analyticsd.messagetracer")
+    (global-name "com.apple.system.logger")
+    (global-name "com.apple.coreservices.launchservicesd"))
+
+(allow mach-register)
+(allow ipc-posix-shm-read-data
+    (ipc-posix-name "apple.shm.notification_center"))
+(allow ipc-posix-shm-read*)
+(allow ipc-posix-shm-write-create)
+(allow ipc-posix-shm-write-data)
+
+;; ─── I/O Kit ─────────────────────────────────────────────────────────────────
+(allow iokit-open)

@@ -1,0 +1,27 @@
+;; ─── IPC / Mach ──────────────────────────────────────────────────────────────
+(allow mach-lookup
+    (global-name "com.apple.system.notification_center")
+    (global-name "com.apple.system.opendirectoryd.libinfo")
+    (global-name "com.apple.logd")
+    (global-name "com.apple.FSEvents")
+    (global-name "com.apple.SystemConfiguration.configd")
+    (global-name "com.apple.SystemConfiguration.DNSConfiguration")
+    (global-name "com.apple.trustd.agent")
+    (global-name "com.apple.diagnosticd")
+    (global-name "com.apple.analyticsd")
+    (global-name "com.apple.dnssd.service")
+    (global-name "com.apple.CoreServices.coreservicesd")
+    (global-name "com.apple.DiskArbitration.diskarbitrationd")
+    (global-name "com.apple.analyticsd.messagetracer")
+    (global-name "com.apple.system.logger")
+    (global-name "com.apple.coreservices.launchservicesd"))
+
+(allow mach-register)
+(allow ipc-posix-shm-read-data
+    (ipc-posix-name "apple.shm.notification_center"))
+(allow ipc-posix-shm-read*)
+(allow ipc-posix-shm-write-create)
+(allow ipc-posix-shm-write-data)
+
+;; ─── I/O Kit ─────────────────────────────────────────────────────────────────
+(allow iokit-open)

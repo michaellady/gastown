@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/steveyegge/gastown/internal/constants"
+	"github.com/steveyegge/gastown/internal/sandbox"
 )
 
 // resolveConfigMu serializes agent config resolution across all callers.
@@ -1998,10 +1999,14 @@ func BuildStartupCommand(envVars map[string]string, rigPath, prompt string) stri
 		}
 	}
 
-	// Apply exec wrapper from rig/town settings if not already set on the resolved config.
-	// ExecWrapper is a deployment-level setting (sandbox/container) independent of agent choice.
+	// Apply sandbox or exec wrapper from rig/town settings.
+	// SandboxConfig (Go-native) takes precedence over raw ExecWrapper tokens.
 	if len(rc.ExecWrapper) == 0 {
-		rc.ExecWrapper = resolveExecWrapper(rigPath)
+		if sandboxCfg := resolveSandboxConfig(rc, rigPath); sandboxCfg != nil {
+			rc.ExecWrapper = sandboxCfg
+		} else {
+			rc.ExecWrapper = resolveExecWrapper(rigPath)
+		}
 	}
 
 	// Copy env vars to avoid mutating caller map
@@ -2353,6 +2358,81 @@ func BuildCrewStartupCommandWithAgentOverride(rigName, crewName, rigPath, prompt
 		Prompt:    prompt,
 	})
 	return BuildStartupCommandWithAgentOverride(envVars, rigPath, prompt, agentOverride)
+}
+
+// resolveSandboxConfig checks if SandboxConfig is enabled on the RuntimeConfig
+// and generates sandbox-exec tokens. Returns nil if sandbox is not configured
+// or if assembly fails. The envVars from the calling context provide GT_POLECAT_PATH
+// etc. that are needed at policy assembly time — but since we don't have them here
+// at config resolution time, the tokens use placeholder params that sandbox-exec
+// resolves via -D flags at runtime.
+func resolveSandboxConfig(rc *RuntimeConfig, rigPath string) []string {
+	if rc.Sandbox == nil || !rc.Sandbox.Enabled {
+		// Also check rig settings for sandbox config.
+		if rigPath == "" {
+			return nil
+		}
+		rigSettings, err := LoadRigSettings(RigSettingsPath(rigPath))
+		if err != nil || rigSettings == nil || rigSettings.Runtime == nil {
+			return nil
+		}
+		if rigSettings.Runtime.Sandbox == nil || !rigSettings.Runtime.Sandbox.Enabled {
+			return nil
+		}
+		rc.Sandbox = rigSettings.Runtime.Sandbox
+	}
+
+	cfg := rc.Sandbox
+
+	// Parse features.
+	var features []sandbox.Feature
+	if len(cfg.Features) > 0 {
+		var err error
+		features, err = sandbox.ParseFeatures(cfg.Features)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: sandbox config: %v\n", err)
+			return nil
+		}
+	}
+
+	// Build policy config. The actual paths (_HOME, TOWN_ROOT, etc.) are not
+	// known at config resolution time — they come from envVars at spawn time.
+	// We assemble the policy with placeholder values; sandbox-exec uses -D params.
+	// For assembly we need the actual home dir (for profile content that references it).
+	home := os.Getenv("HOME")
+	if home == "" {
+		home = "/Users/unknown"
+	}
+	townRoot := os.Getenv("GT_ROOT")
+	if townRoot == "" {
+		townRoot = filepath.Join(home, "gt")
+	}
+	rigName := os.Getenv("GT_RIG")
+	if rigName == "" && rigPath != "" {
+		rigName = filepath.Base(rigPath)
+	}
+	worktree := os.Getenv("GT_POLECAT_PATH")
+	if worktree == "" {
+		worktree = "/tmp/sandbox-placeholder-worktree"
+	}
+
+	tokens, err := sandbox.BuildCommandTokens(sandbox.PolicyConfig{
+		Home:        home,
+		TownRoot:    townRoot,
+		RigName:     rigName,
+		Worktree:    worktree,
+		Agent:       cfg.Agent,
+		Features:    features,
+		ExtraDirsRO: cfg.ExtraDirsRO,
+		ExtraDirsRW: cfg.ExtraDirsRW,
+		Debug:       cfg.Debug,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: sandbox policy assembly failed: %v\n", err)
+		return nil
+	}
+
+	return tokens
 }
 
 // resolveExecWrapper loads the exec_wrapper from rig settings.

@@ -1,0 +1,5 @@
+;; ─── Rig shared dirs (read-only) ──────────────────────────────────────────────
+(allow file-read*
+    (subpath (string-append (param "TOWN_ROOT") "/" (param "RIG_NAME") "/.beads"))
+    (subpath (string-append (param "TOWN_ROOT") "/" (param "RIG_NAME") "/.repo.git"))
+    (subpath (string-append (param "TOWN_ROOT") "/" (param "RIG_NAME") "/.git")))

@@ -1,0 +1,105 @@
+;; ─── Process control ─────────────────────────────────────────────────────────
+(allow process-fork)
+(allow process-exec)
+(allow signal (target same-sandbox))
+(allow process-info* (target same-sandbox))
+(allow mach-priv-task-port (target same-sandbox))
+(allow pseudo-tty)
+(allow sysctl-read)
+
+;; ─── Execute system and tool binaries ────────────────────────────────────────
+(allow process-exec
+    (subpath "/usr/bin")
+    (subpath "/usr/sbin")
+    (subpath "/usr/libexec")
+    (subpath "/bin")
+    (subpath "/sbin")
+    (subpath "/opt/homebrew")
+    (subpath (string-append (param "_HOME") "/.local"))
+    (subpath "/Library/Developer/CommandLineTools"))
+
+;; ─── System reads ────────────────────────────────────────────────────────────
+(allow file-read*
+    (subpath "/usr")
+    (subpath "/bin")
+    (subpath "/sbin")
+    (subpath "/dev")
+    (subpath "/opt/homebrew")
+    (subpath "/System/Library")
+    (subpath "/System/Volumes/Preboot")
+    (subpath "/Library/Apple")
+    (subpath "/Library/Frameworks")
+    (subpath "/Library/Fonts")
+    (subpath "/Library/Developer/CommandLineTools")
+    (subpath "/Library/Preferences/Logging")
+    (subpath "/Library/Filesystems/NetFSPlugins")
+    (literal "/Library/Preferences/.GlobalPreferences.plist")
+    (literal "/Library/Preferences/com.apple.networkd.plist")
+    (literal "/dev")
+    (subpath "/private/tmp")
+    (subpath "/private/var/folders"))
+
+;; /etc and /var symlinks into /private/*
+(allow file-read*
+    (literal "/private")
+    (literal "/private/var")
+    (subpath "/private/var/db/timezone")
+    (literal "/private/var/select/sh")
+    (literal "/private/var/select/developer_dir")
+    (literal "/var/select/developer_dir")
+    (literal "/private/var/db/xcode_select_link")
+    (literal "/var/db/xcode_select_link")
+    (literal "/private/etc/hosts")
+    (literal "/private/etc/resolv.conf")
+    (literal "/private/etc/services")
+    (literal "/private/etc/protocols")
+    (literal "/private/etc/shells")
+    (subpath "/private/etc/ssl")
+    (literal "/private/etc/localtime")
+    (literal "/etc")
+    (literal "/var"))
+
+;; Metadata traversal for system roots
+(allow file-read-metadata
+    (subpath "/System")
+    (subpath "/private/var/run")
+    (literal "/")
+    (literal "/Users")
+    (literal "/home")
+    (literal "/private/etc")
+    (subpath "/dev")
+    (subpath (param "_HOME")))
+
+;; ─── Temp and device writes ──────────────────────────────────────────────────
+(allow file-read* file-write*
+    (subpath "/tmp")
+    (subpath "/private/tmp")
+    (subpath "/var/folders")
+    (subpath "/private/var/folders"))
+
+;; Device nodes for shell I/O and PTYs
+(allow file-read* file-write*
+    (subpath "/dev/fd")
+    (literal "/dev/stdout")
+    (literal "/dev/stderr")
+    (literal "/dev/null")
+    (literal "/dev/tty")
+    (literal "/dev/ptmx")
+    (literal "/dev/dtracehelper")
+    (regex #"^/dev/tty")
+    (regex #"^/dev/ttys")
+    (regex #"^/dev/pty"))
+
+(allow file-read*
+    (literal "/dev/zero")
+    (literal "/dev/autofs_nowait")
+    (literal "/dev/urandom")
+    (literal "/dev/random"))
+
+(allow file-ioctl
+    (literal "/dev/dtracehelper")
+    (literal "/dev/tty")
+    (literal "/dev/ptmx")
+    (regex #"^/dev/tty")
+    (regex #"^/dev/ttys")
+    (regex #"^/dev/pty"))

@@ -1,0 +1,7 @@
+;; XDG metadata traversal
+(allow file-read-metadata
+    (literal (string-append (param "_HOME") "/.config"))
+    (literal (string-append (param "_HOME") "/.cache"))
+    (literal (string-append (param "_HOME") "/.local"))
+    (literal (string-append (param "_HOME") "/.local/share"))
+    (literal (string-append (param "_HOME") "/.local/bin")))

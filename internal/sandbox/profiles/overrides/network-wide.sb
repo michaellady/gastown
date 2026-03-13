@@ -1,0 +1,4 @@
+;; ─── Network (wide) ──────────────────────────────────────────────────────────
+;; Full network access — replaces 20-network-loopback.sb when enabled.
+(allow network*)
+(allow system-socket)

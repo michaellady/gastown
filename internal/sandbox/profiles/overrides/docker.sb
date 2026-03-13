@@ -1,0 +1,5 @@
+;; ─── Docker socket access ────────────────────────────────────────────────────
+(allow file-read* file-write*
+    (literal "/var/run/docker.sock")
+    (literal "/private/var/run/docker.sock")
+    (subpath (string-append (param "_HOME") "/.docker")))

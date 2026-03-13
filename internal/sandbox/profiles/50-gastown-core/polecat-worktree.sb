@@ -1,0 +1,3 @@
+;; ─── Polecat worktree - full read+write (PRIMARY WORKSPACE) ─────────────────
+(allow file-read* file-write*
+    (subpath (param "WORKTREE")))

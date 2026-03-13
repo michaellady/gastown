@@ -1,0 +1,3 @@
+;; Runtime writes (heartbeat, locks, nudge queue)
+(allow file-write*
+    (subpath (string-append (param "TOWN_ROOT") "/.runtime")))

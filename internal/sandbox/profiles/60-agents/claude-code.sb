@@ -1,0 +1,20 @@
+;; ─── Claude Code state (RW) ─────────────────────────────────────────────────
+(allow file-read* file-write*
+    (subpath (string-append (param "_HOME") "/.claude"))
+    (subpath (string-append (param "_HOME") "/.cache/claude"))
+    (subpath (string-append (param "_HOME") "/.config/claude"))
+    (subpath (string-append (param "_HOME") "/.local/state/claude"))
+    (subpath (string-append (param "_HOME") "/.local/share/claude")))
+
+(allow file-read*
+    (literal (string-append (param "_HOME") "/Library/Application Support/Claude/claude_desktop_config.json"))
+    (subpath "/Library/Application Support/ClaudeCode/.claude")
+    (literal "/Library/Application Support/ClaudeCode/managed-settings.json")
+    (literal "/Library/Application Support/ClaudeCode/managed-mcp.json")
+    (literal "/Library/Application Support/ClaudeCode/CLAUDE.md"))
+
+;; npm cache
+(allow file-read* file-write*
+    (subpath (string-append (param "_HOME") "/.npm"))
+    (subpath (string-append (param "_HOME") "/.cache/npm"))
+    (subpath (string-append (param "_HOME") "/.cache/node")))
